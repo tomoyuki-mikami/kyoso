@@ -111,6 +111,7 @@ import {
 } from "./verification.js";
 
 const MAX_AGENT_RETRY_PROGRESS_EVENTS = 100;
+const REAL_AGENTS: readonly AgentName[] = ["codex", "claude", "gemini"];
 
 export type RunReviewOptions = LoadConfigOptions & {
   config?: KyosoConfig;
@@ -600,6 +601,7 @@ export async function runReview(
             warnings,
             budgetTracker,
             requestFingerprint,
+            agentRoles: resolveAgentRoles(loaded.config),
           }),
         );
       }
@@ -690,7 +692,7 @@ export async function runReview(
           `Agent ${result.agent} reported ${result.reportedFindings} findings, above the soft target of ${reviewBudget.maxFindingsPerAgent}; all findings were retained.`,
         );
       }
-      const enabledAgents = (["codex", "claude"] as const).filter(
+      const enabledAgents = REAL_AGENTS.filter(
         (agent) => loaded.config.agents[agent].enabled,
       );
       const agentsUsed = normalizedAgentResults
@@ -759,7 +761,7 @@ export async function runReview(
                 ? "No primary review agents enabled"
                 : "All backend agents failed",
               evidence: noPrimaryAgents
-                ? "Both configured primary reviewers are disabled."
+                ? "No configured primary reviewers are enabled."
                 : normalizedAgentResults
                     .map(
                       (result) =>
@@ -1584,7 +1586,7 @@ async function runAgents(input: {
   progressHeartbeatMs?: number;
 }): Promise<AgentRunResult[]> {
   const agentRoles = resolveAgentRoles(input.config);
-  const enabledAgents = (["codex", "claude"] as const).filter(
+  const enabledAgents = REAL_AGENTS.filter(
     (agent) => input.config.agents[agent].enabled,
   );
   const openRouter = input.config.agents.codex.openRouter;
@@ -2190,7 +2192,7 @@ function isPreflightAgentFailure(result: AgentRunResult): boolean {
 function resolveAgentRoles(
   config: KyosoConfig,
 ): Partial<Record<AgentName, AgentRole>> {
-  const enabledAgents = (["codex", "claude"] as const).filter(
+  const enabledAgents = REAL_AGENTS.filter(
     (agent) => config.agents[agent].enabled,
   );
   const singleAgentMode = enabledAgents.length === 1;
@@ -2346,6 +2348,7 @@ async function buildSecretBlockResult(input: {
   warnings: string[];
   budgetTracker: ReviewBudgetTracker;
   requestFingerprint: string;
+  agentRoles: Partial<Record<AgentName, AgentRole>>;
 }): Promise<KyosoResult> {
   const finding = finalizePolicyFinding(
     buildSecretFinding(input.secretScan, {
@@ -2388,20 +2391,14 @@ async function buildSecretBlockResult(input: {
           ]
         : [],
     openQuestions: [],
-    agentOpinions: [
-      {
-        agent: "codex",
-        role: "implementation_reviewer",
-        summary: "Skipped because Kyoso blocked detected secrets.",
-        status: "skipped",
-      },
-      {
-        agent: "claude",
-        role: "architecture_security_reviewer",
-        summary: "Skipped because Kyoso blocked detected secrets.",
-        status: "skipped",
-      },
-    ],
+    agentOpinions: REAL_AGENTS.filter(
+      (agent) => input.agentRoles[agent] !== undefined,
+    ).map((agent) => ({
+      agent,
+      role: input.agentRoles[agent] as AgentRole,
+      summary: "Skipped because Kyoso blocked detected secrets.",
+      status: "skipped" as const,
+    })),
     audit: {
       traceId: input.traceId,
       startedAt: input.startedAt,

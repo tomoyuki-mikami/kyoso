@@ -58,6 +58,8 @@ const TITLE_STOP_WORDS = new Set([
 const TITLE_SIMILARITY_THRESHOLD = 0.6;
 const LINE_OVERLAP_MARGIN = 2;
 
+const REAL_AGENTS: AgentName[] = ["codex", "claude", "gemini"];
+
 export type AggregatedReview = {
   findings: KyosoFinding[];
   testsToAdd: string[];
@@ -65,7 +67,7 @@ export type AggregatedReview = {
   openQuestions: string[];
   disagreements: Array<{
     topic: string;
-    positions: Array<{ agent: "codex" | "claude"; opinion: string }>;
+    positions: Array<{ agent: AgentName; opinion: string }>;
     judgeComment: string;
   }>;
 };
@@ -174,47 +176,95 @@ export function realSourceAgentCount(
 function extractDisagreements(
   opinions: NormalizedAgentOpinion[],
 ): AggregatedReview["disagreements"] {
-  const codex = opinions.find((opinion) => opinion.agent === "codex");
-  const claude = opinions.find((opinion) => opinion.agent === "claude");
-  if (!codex || !claude) return [];
+  const opinionByAgent = new Map<AgentName, NormalizedAgentOpinion>();
+  for (const opinion of opinions) {
+    if (!opinionByAgent.has(opinion.agent)) {
+      opinionByAgent.set(opinion.agent, opinion);
+    }
+  }
+  const reportingAgents = REAL_AGENTS.filter((agent) =>
+    opinionByAgent.has(agent),
+  );
+
+  const pairs: Array<[AgentName, AgentName]> = [];
+  for (let i = 0; i < reportingAgents.length; i += 1) {
+    for (let j = i + 1; j < reportingAgents.length; j += 1) {
+      const agentA = reportingAgents[i];
+      const agentB = reportingAgents[j];
+      if (!agentA || !agentB) continue;
+      pairs.push([agentA, agentB]);
+    }
+  }
 
   const disagreements: AggregatedReview["disagreements"] = [];
-  const codexMax =
-    codex.findings
+  for (const [agentA, agentB] of pairs) {
+    const opinionA = opinionByAgent.get(agentA);
+    const opinionB = opinionByAgent.get(agentB);
+    if (!opinionA || !opinionB) continue;
+    disagreements.push(
+      ...extractPairDisagreements(
+        agentA,
+        opinionA,
+        agentB,
+        opinionB,
+        pairs.length > 1,
+      ),
+    );
+  }
+
+  return deduplicateDisagreements(disagreements);
+}
+
+function extractPairDisagreements(
+  agentA: AgentName,
+  opinionA: NormalizedAgentOpinion,
+  agentB: AgentName,
+  opinionB: NormalizedAgentOpinion,
+  disambiguate: boolean,
+): AggregatedReview["disagreements"] {
+  // With exactly one reporting pair (the historical 2-agent case), the topic
+  // stays unsuffixed to preserve pre-existing output byte-for-byte. With 3
+  // agents there are up to 3 pairs, so each pair's topic is disambiguated to
+  // avoid collapsing distinct disagreements during deduplication.
+  const suffix = disambiguate ? ` (${agentA} vs ${agentB})` : "";
+  const disagreements: AggregatedReview["disagreements"] = [];
+
+  const severityA =
+    opinionA.findings
       .map((finding) => finding.severity)
       .sort(compareSeverity)[0] ?? "info";
-  const claudeMax =
-    claude.findings
+  const severityB =
+    opinionB.findings
       .map((finding) => finding.severity)
       .sort(compareSeverity)[0] ?? "info";
-  if (codexMax !== claudeMax) {
+  if (severityA !== severityB) {
     disagreements.push({
-      topic: "Highest reported severity",
+      topic: `Highest reported severity${suffix}`,
       positions: [
-        { agent: "codex", opinion: codexMax },
-        { agent: "claude", opinion: claudeMax },
+        { agent: agentA, opinion: severityA },
+        { agent: agentB, opinion: severityB },
       ],
       judgeComment:
         "Kyoso preserves the higher-severity signal for deterministic policy decisions.",
     });
   }
 
-  const codexFindings = codex.findings.map((finding) =>
-    comparableFinding("codex", finding),
+  const findingsA = opinionA.findings.map((finding) =>
+    comparableFinding(agentA, finding),
   );
-  const claudeFindings = claude.findings.map((finding) =>
-    comparableFinding("claude", finding),
+  const findingsB = opinionB.findings.map((finding) =>
+    comparableFinding(agentB, finding),
   );
 
-  for (const codexFinding of codexFindings) {
-    for (const claudeFinding of claudeFindings) {
-      if (!sameIssueForDisagreement(codexFinding, claudeFinding)) continue;
-      if (codexFinding.severity === claudeFinding.severity) continue;
+  for (const findingA of findingsA) {
+    for (const findingB of findingsB) {
+      if (!sameIssueForDisagreement(findingA, findingB)) continue;
+      if (findingA.severity === findingB.severity) continue;
       disagreements.push({
-        topic: `Severity disagreement: ${codexFinding.title}`,
+        topic: `Severity disagreement: ${findingA.title}${suffix}`,
         positions: [
-          { agent: "codex", opinion: formatFindingOpinion(codexFinding) },
-          { agent: "claude", opinion: formatFindingOpinion(claudeFinding) },
+          { agent: agentA, opinion: formatFindingOpinion(findingA) },
+          { agent: agentB, opinion: formatFindingOpinion(findingB) },
         ],
         judgeComment:
           "Kyoso keeps the higher severity when the agents disagree on the same issue.",
@@ -223,11 +273,11 @@ function extractDisagreements(
   }
 
   disagreements.push(
-    ...riskAssessmentGaps(codexFindings, claudeFindings),
-    ...riskAssessmentGaps(claudeFindings, codexFindings),
+    ...riskAssessmentGaps(findingsA, agentB, findingsB, suffix),
+    ...riskAssessmentGaps(findingsB, agentA, findingsA, suffix),
   );
 
-  return deduplicateDisagreements(disagreements);
+  return disagreements;
 }
 
 function normalizeCategory(category: string): FindingCategory {
@@ -397,7 +447,9 @@ function sameTitledIssueForDisagreement(
 
 function riskAssessmentGaps(
   reporters: ComparableFinding[],
+  comparatorAgent: AgentName,
   comparators: ComparableFinding[],
+  topicSuffix: string,
 ): AggregatedReview["disagreements"] {
   return reporters.flatMap((finding) => {
     if (!isHighSeverity(finding.severity)) return [];
@@ -409,11 +461,11 @@ function riskAssessmentGaps(
     }
     return [
       {
-        topic: `Risk assessment gap: ${finding.title}`,
+        topic: `Risk assessment gap: ${finding.title}${topicSuffix}`,
         positions: [
           { agent: finding.agent, opinion: formatFindingOpinion(finding) },
           {
-            agent: finding.agent === "codex" ? "claude" : "codex",
+            agent: comparatorAgent,
             opinion:
               sameCategory.length > 0
                 ? sameCategory.map(formatFindingOpinion).join("; ")

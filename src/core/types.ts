@@ -90,7 +90,12 @@ export type ReviewCompletion = {
 export type ModelCallKind = "primary" | "verifier" | "judge";
 
 export type ModelProviderRoute =
-  "codex_default" | "claude_default" | "openrouter" | "openai" | "anthropic";
+  | "codex_default"
+  | "claude_default"
+  | "gemini_default"
+  | "openrouter"
+  | "openai"
+  | "anthropic";
 
 export type ModelExecutionIdentity = {
   providerRoute: ModelProviderRoute;
@@ -217,7 +222,7 @@ export type CisaSecureByDesignResult = {
   notes: string[];
 };
 
-export type AgentName = "codex" | "claude";
+export type AgentName = "codex" | "claude" | "gemini";
 
 export type AgentRole =
   | "implementation_reviewer"

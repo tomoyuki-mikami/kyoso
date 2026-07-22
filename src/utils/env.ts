@@ -5,7 +5,7 @@ import {
   type KyosoConfig,
 } from "../config/schema.js";
 import { createModelExecutionIdentity } from "../core/modelExecutionIdentity.js";
-import type { ModelExecutionIdentity } from "../core/types.js";
+import type { AgentName, ModelExecutionIdentity } from "../core/types.js";
 
 const MINIMAL_ENV_KEYS = [
   "PATH",
@@ -81,7 +81,7 @@ export class ChildEnvPreflightError extends Error {
 }
 
 type ChildEnvOptions = {
-  agent?: "codex" | "claude";
+  agent?: AgentName;
   model?: string;
   provider?: CodexProvider;
   openRouter?: CodexOpenRouterOptions;
@@ -116,7 +116,7 @@ export function buildChildLaunchContext(
   parentEnv: NodeJS.ProcessEnv,
   whitelist: string[],
   explicit: Record<string, string>,
-  options: ChildEnvOptions & { agent: "codex" | "claude" },
+  options: ChildEnvOptions & { agent: AgentName },
 ): ChildLaunchContext {
   const env = buildChildEnvironment(parentEnv, whitelist, explicit, options);
   const openRouterSelected =
@@ -124,7 +124,9 @@ export function buildChildLaunchContext(
   const requestedModel =
     options.agent === "claude"
       ? env.ANTHROPIC_MODEL
-      : readCodexRequestedModel(env.CODEX_CONFIG);
+      : options.agent === "codex"
+        ? readCodexRequestedModel(env.CODEX_CONFIG)
+        : undefined;
   return {
     env,
     executionIdentity: createModelExecutionIdentity({
@@ -132,7 +134,9 @@ export function buildChildLaunchContext(
         ? "openrouter"
         : options.agent === "codex"
           ? "codex_default"
-          : "claude_default",
+          : options.agent === "claude"
+            ? "claude_default"
+            : "gemini_default",
       requestedModel,
     }),
   };
@@ -258,7 +262,7 @@ function discardOpenRouterExcludedCredentials(env: NodeJS.ProcessEnv): void {
 
 function applyModelConfig(
   env: NodeJS.ProcessEnv,
-  agent: "codex" | "claude" | undefined,
+  agent: AgentName | undefined,
   model: string | undefined,
 ): void {
   if (!model) return;

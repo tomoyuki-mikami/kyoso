@@ -79,6 +79,16 @@ export async function createSnapshot(
     ),
     "utf8",
   );
+  await writeFile(
+    join(contextDir, "instructions.gemini.md"),
+    buildAgentPrompt(
+      tool,
+      request,
+      "gemini",
+      options.agentRoles?.gemini ?? "combined_reviewer",
+    ),
+    "utf8",
+  );
   if (request.repoSummary)
     await writeFile(
       join(contextDir, "repo_summary.md"),

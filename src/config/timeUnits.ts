@@ -22,6 +22,11 @@ export const configTimeUnitPairs = [
     secondsKey: "timeoutS",
   },
   {
+    parentPath: ["agents", "gemini"],
+    millisecondsKey: "timeoutMs",
+    secondsKey: "timeoutS",
+  },
+  {
     parentPath: ["agents", "codex", "openRouter"],
     millisecondsKey: "streamIdleTimeoutMs",
     secondsKey: "streamIdleTimeoutS",

@@ -1183,6 +1183,110 @@ describe("runReview", () => {
     expect(result.summaryMarkdown).not.toContain("Cross-validation:");
   });
 
+  test("three-agent review runs codex, claude, and gemini together in multi-agent mode (AC1)", async () => {
+    const cwd = await tempCwd();
+    const baseConfig = kyosoConfigSchema.parse(defaultConfig);
+    const config: KyosoConfig = {
+      ...baseConfig,
+      agents: {
+        ...baseConfig.agents,
+        gemini: { ...baseConfig.agents.gemini, enabled: true },
+      },
+    };
+    const manager = new FakeAgentManager();
+    const result = await runReview(
+      "plan_review",
+      { goal: "review plan" },
+      { cwd, config, agentManager: manager },
+    );
+
+    expect(manager.calls.map((call) => call.agent)).toEqual([
+      "codex",
+      "claude",
+      "gemini",
+    ]);
+    expect(manager.calls.map((call) => call.role)).toEqual([
+      "implementation_reviewer",
+      "architecture_security_reviewer",
+      "combined_reviewer",
+    ]);
+    expect(result.reviewMode).toBe("multi_agent");
+    expect(result.agentsUsed).toEqual(["codex", "claude", "gemini"]);
+    expect(result.agentOpinions.map((opinion) => opinion.agent)).toEqual([
+      "codex",
+      "claude",
+      "gemini",
+    ]);
+    expect(result.coverage.independentReview).toBe(true);
+    expect(result.summaryMarkdown).toContain("**Review mode:** multi-agent");
+  });
+
+  test("keeping agents.gemini.enabled=false leaves the two-agent review byte-for-byte unchanged (AC4)", async () => {
+    const cwd = await tempCwd();
+    const baseConfig = kyosoConfigSchema.parse(defaultConfig);
+    const geminiDisabledConfig: KyosoConfig = {
+      ...baseConfig,
+      agents: {
+        ...baseConfig.agents,
+        gemini: { ...baseConfig.agents.gemini, enabled: false },
+      },
+    };
+    const manager = new FakeAgentManager();
+    const result = await runReview(
+      "plan_review",
+      { goal: "review plan" },
+      { cwd, config: geminiDisabledConfig, agentManager: manager },
+    );
+
+    // Identical assertions to the pre-gemini "two-agent review keeps
+    // configured roles and multi-agent mode" test above: adding the gemini
+    // agent entry with enabled=false must not change any existing output.
+    expect(manager.calls.map((call) => call.role)).toEqual([
+      "implementation_reviewer",
+      "architecture_security_reviewer",
+    ]);
+    expect(result.reviewMode).toBe("multi_agent");
+    expect(result.agentsUsed).toEqual(["codex", "claude"]);
+    expect(result.coverage.independentReview).toBe(true);
+    expect(result.summaryMarkdown).toContain("**Review mode:** multi-agent");
+    expect(result.summaryMarkdown).toContain("- None.");
+    expect(result.summaryMarkdown).not.toContain("N/A - single-agent review");
+    expect(result.summaryMarkdown).not.toContain("Cross-validation:");
+  });
+
+  test("FakeAgentManager scenarios can target gemini directly among three agents", async () => {
+    const cwd = await tempCwd();
+    const baseConfig = kyosoConfigSchema.parse(defaultConfig);
+    const config: KyosoConfig = {
+      ...baseConfig,
+      agents: {
+        ...baseConfig.agents,
+        gemini: { ...baseConfig.agents.gemini, enabled: true },
+      },
+    };
+    const result = await runReview(
+      "plan_review",
+      { goal: "review plan" },
+      {
+        cwd,
+        config,
+        agentManager: new FakeAgentManager({ gemini: "timeout" }),
+      },
+    );
+
+    expect(
+      result.agentOpinions.find((opinion) => opinion.agent === "codex")?.status,
+    ).toBe("completed");
+    expect(
+      result.agentOpinions.find((opinion) => opinion.agent === "claude")
+        ?.status,
+    ).toBe("completed");
+    expect(
+      result.agentOpinions.find((opinion) => opinion.agent === "gemini")
+        ?.status,
+    ).toBe("timeout");
+  });
+
   test("untrusted local config is skipped and reported in result warnings", async () => {
     const cwd = await tempCwd();
     await writeFile(
@@ -2869,6 +2973,7 @@ export default {};
           ...baseConfig.agents.claude,
           enabled: false,
         },
+        gemini: baseConfig.agents.gemini,
       },
     };
     const result = await runReview(
@@ -3038,6 +3143,7 @@ export default {};
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3176,6 +3282,7 @@ export default {};
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3346,6 +3453,48 @@ effort = "high"
     );
   });
 
+  test("global TOML override of agents.gemini command and args spawns the exact subprocess (AC5)", async () => {
+    const cwd = await tempCwd();
+    const home = await mkdtemp(join(tmpdir(), "kyoso-home-"));
+    await mkdir(join(home, ".config", "kyoso"), { recursive: true });
+    const fixture = join(process.cwd(), "test/fixtures/fake-acp-agent.ts");
+    await writeFile(
+      join(home, ".config", "kyoso", "config.toml"),
+      `[agents.codex]
+enabled = false
+
+[agents.claude]
+enabled = false
+
+[agents.gemini]
+enabled = true
+command = "bun"
+args = ["run", ${JSON.stringify(fixture)}]
+timeoutMs = 5000
+`,
+      "utf8",
+    );
+
+    const result = await runReview(
+      "plan_review",
+      {
+        goal: "review plan",
+        currentPlan: "do it",
+        selectedFiles: [
+          { path: "src/foo.ts", content: "export const foo = 1;" },
+        ],
+        options: { maxAgentTimeoutMs: 5_000 },
+      },
+      { cwd, env: { HOME: home, PATH: process.env.PATH ?? "" } },
+    );
+
+    expect(result.agentsUsed).toEqual(["gemini"]);
+    expect(result.agentOpinions[0]?.agent).toBe("gemini");
+    expect(result.agentOpinions[0]?.summary).toContain(
+      "fake ACP subprocess read snapshot context and selected file",
+    );
+  });
+
   test("rejected effort with a token-like/newline value surfaces a sanitized audit warning", async () => {
     const cwd = await tempCwd();
     const home = await mkdtemp(join(tmpdir(), "kyoso-home-"));
@@ -3413,6 +3562,7 @@ effort = "${rawEffortValue}"
         timeoutMs: 5_000,
       },
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3499,6 +3649,7 @@ setInterval(() => {}, 1000);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3542,6 +3693,7 @@ process.exit(1);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3593,6 +3745,7 @@ process.exit(1);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3711,6 +3864,10 @@ function singleAgentConfig(agent: "codex" | "claude"): KyosoConfig {
       claude: {
         ...baseConfig.agents.claude,
         enabled: agent === "claude",
+      },
+      gemini: {
+        ...baseConfig.agents.gemini,
+        enabled: false,
       },
     },
   };

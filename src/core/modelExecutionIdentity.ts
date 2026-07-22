@@ -7,6 +7,7 @@ export const MODEL_EXECUTION_IDENTITY_MAX_CHARS = 160;
 const MODEL_PROVIDER_ROUTES = new Set<ModelProviderRoute>([
   "codex_default",
   "claude_default",
+  "gemini_default",
   "openrouter",
   "openai",
   "anthropic",

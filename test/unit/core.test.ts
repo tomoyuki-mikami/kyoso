@@ -113,10 +113,36 @@ describe("config", () => {
     expect(parsed.workspace.maxContextBytes).toBe(500_000);
   });
 
+  test("loads a project kyoso.toml that omits [agents.gemini] and keeps the disabled defaults (AC7)", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "kyoso-gemini-omitted-"));
+    const configHome = join(cwd, "xdg");
+    await mkdir(join(configHome, "kyoso"), { recursive: true });
+    await writeFile(
+      join(cwd, "kyoso.toml"),
+      `[agents.claude]
+model = "claude-omits-gemini-section"
+`,
+      "utf8",
+    );
+
+    const loaded = await loadConfig({
+      cwd,
+      env: { XDG_CONFIG_HOME: configHome },
+    });
+
+    expect(loaded.config.agents.gemini).toEqual(
+      kyosoConfigSchema.parse(defaultConfig).agents.gemini,
+    );
+    expect(loaded.config.agents.gemini.enabled).toBe(false);
+    expect(loaded.config.agents.gemini.command).toBe("");
+    expect(loaded.config.agents.gemini.role).toBe("combined_reviewer");
+  });
+
   test("applies the shared agent timeout default", () => {
     const parsed = kyosoConfigSchema.parse({
       ...defaultConfig,
       agents: {
+        ...defaultConfig.agents,
         codex: { ...defaultConfig.agents?.codex, timeoutMs: undefined },
         claude: { ...defaultConfig.agents?.claude, timeoutMs: undefined },
       },
@@ -2826,6 +2852,57 @@ describe("aggregation", () => {
     ).toBe(true);
   });
 
+  test("keeps the two-agent disagreement topic byte-identical without an agent-pair suffix (gemini-disabled parity)", () => {
+    const aggregated = aggregateAgentResults([
+      completed("codex", "low", {
+        title: "Tenant boundary bypass",
+        files: [{ path: "src/auth.ts" }],
+      }),
+      completed("claude", "high", {
+        title: "Tenant boundary bypass",
+        files: [{ path: "src/auth.ts" }],
+      }),
+    ]);
+
+    expect(aggregated.disagreements.map((item) => item.topic)).toEqual([
+      "Highest reported severity",
+      "Severity disagreement: Tenant boundary bypass",
+      "Risk assessment gap: Tenant boundary bypass",
+    ]);
+  });
+
+  test("extracts all-pairs disagreements across three reporting agents with disambiguated topics", () => {
+    const aggregated = aggregateAgentResults(
+      [
+        completed("codex", "low", {
+          title: "Tenant boundary bypass",
+          files: [{ path: "src/auth.ts" }],
+        }),
+        completed("claude", "high", {
+          title: "Tenant boundary bypass",
+          files: [{ path: "src/auth.ts" }],
+        }),
+        completed("gemini", "critical", {
+          title: "Tenant boundary bypass",
+          files: [{ path: "src/auth.ts" }],
+        }),
+      ],
+      { reviewMode: "multi_agent" },
+    );
+
+    const severityDisagreementTopics = aggregated.disagreements
+      .map((item) => item.topic)
+      .filter((topic) => topic.startsWith("Severity disagreement:"))
+      .sort();
+    expect(severityDisagreementTopics).toEqual(
+      [
+        "Severity disagreement: Tenant boundary bypass (codex vs claude)",
+        "Severity disagreement: Tenant boundary bypass (codex vs gemini)",
+        "Severity disagreement: Tenant boundary bypass (claude vs gemini)",
+      ].sort(),
+    );
+  });
+
   test("extracts severity disagreements for overlapping line ranges with different titles", () => {
     const aggregated = aggregateAgentResults([
       completed("codex", "low", {
@@ -3017,6 +3094,42 @@ describe("finding verification", () => {
       status: "uncertain",
       verifier: "claude",
     });
+  });
+
+  test("selects a deterministic non-reporting verifier among three real agents", () => {
+    const selectVerifier = (finding: KyosoFinding) =>
+      selectVerificationTargets([finding], 1).selected.map(
+        (target) => target.verifier,
+      );
+
+    expect(
+      selectVerifier(
+        verificationFinding("KYOSO-1", "high", "single_source", ["gemini"]),
+      ),
+    ).toEqual(["codex"]);
+    expect(
+      selectVerifier(
+        verificationFinding("KYOSO-2", "high", "single_source", ["codex"]),
+      ),
+    ).toEqual(["claude"]);
+    expect(
+      selectVerifier(
+        verificationFinding("KYOSO-3", "high", "single_source", ["claude"]),
+      ),
+    ).toEqual(["codex"]);
+
+    // Repeated selection over the same single-source input always resolves to
+    // the same verifier: the choice is a deterministic rule, not random.
+    const repeatedFinding = verificationFinding(
+      "KYOSO-4",
+      "critical",
+      "single_source",
+      ["gemini"],
+    );
+    const first = selectVerifier(repeatedFinding);
+    const second = selectVerifier(repeatedFinding);
+    expect(first).toEqual(["codex"]);
+    expect(second).toEqual(first);
   });
 });
 
@@ -3877,27 +3990,27 @@ describe("child env", () => {
 });
 
 function completed(
-  agent: "codex" | "claude",
+  agent: AgentName,
   severity: Severity,
   overrides: Partial<
     NonNullable<AgentRunResult["normalized"]>["findings"][number]
   > = {},
 ): AgentRunResult {
+  const role =
+    agent === "codex"
+      ? "implementation_reviewer"
+      : agent === "claude"
+        ? "architecture_security_reviewer"
+        : "combined_reviewer";
   return {
     agent,
-    role:
-      agent === "codex"
-        ? "implementation_reviewer"
-        : "architecture_security_reviewer",
+    role,
     status: "completed",
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     normalized: {
       agent,
-      role:
-        agent === "codex"
-          ? "implementation_reviewer"
-          : "architecture_security_reviewer",
+      role,
       summary: "ok",
       findings: [
         {

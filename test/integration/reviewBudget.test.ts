@@ -129,6 +129,7 @@ describe("review execution budget", () => {
       agents: {
         codex: { ...base.agents.codex, enabled: false },
         claude: { ...base.agents.claude, enabled: false },
+        gemini: { ...base.agents.gemini, enabled: false },
       },
     };
     const manager = new FakeAgentManager();

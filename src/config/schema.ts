@@ -125,6 +125,7 @@ export const kyosoConfigSchema = z
     agents: z.object({
       codex: codexAgentSchema,
       claude: baseAgentSchema,
+      gemini: baseAgentSchema,
     }),
     workspace: z.object({
       mode: z.literal("temp_snapshot"),
@@ -207,7 +208,7 @@ export const kyosoConfigSchema = z
     }
   });
 
-function agentConfigLeafPaths(agent: "codex" | "claude"): string[] {
+function agentConfigLeafPaths(agent: "codex" | "claude" | "gemini"): string[] {
   const paths = [
     `agents.${agent}.enabled`,
     `agents.${agent}.type`,
@@ -249,6 +250,7 @@ export const kyosoConfigKnownLeafPaths = [
   "reviewPolicy.multiAgentRequired",
   ...agentConfigLeafPaths("codex"),
   ...agentConfigLeafPaths("claude"),
+  ...agentConfigLeafPaths("gemini"),
   "workspace.mode",
   "workspace.root",
   "workspace.readOnly",
@@ -294,11 +296,13 @@ export const kyosoConfigKnownLeafPaths = [
 export const kyosoConfigRecordPrefixes = [
   "agents.codex.env",
   "agents.claude.env",
+  "agents.gemini.env",
 ];
 
 export const kyosoConfigSecuritySensitivePrefixes = [
   "agents.codex",
   "agents.claude",
+  "agents.gemini",
   "audit",
   "judge",
   "network",

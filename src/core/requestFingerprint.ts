@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import type { KyosoConfig } from "../config/schema.js";
 import type {
+  AgentName,
   AgentRole,
   KyosoReviewRequest,
   ResolvedReviewBudget,
   ReviewTool,
 } from "./types.js";
+
+const REAL_AGENTS: readonly AgentName[] = ["codex", "claude", "gemini"];
 
 export const REVIEW_CONTRACT_VERSION = "2026-07-16-v3";
 
@@ -13,21 +16,21 @@ export function createRequestFingerprint(input: {
   tool: ReviewTool;
   request: KyosoReviewRequest;
   config: KyosoConfig;
-  roles: Partial<Record<"codex" | "claude", AgentRole>>;
+  roles: Partial<Record<AgentName, AgentRole>>;
   budget: ResolvedReviewBudget;
   entrypoint?: "cli" | "mcp" | "core";
 }): string {
-  const reviewers = (["codex", "claude"] as const)
-    .filter((agent) => input.config.agents[agent].enabled)
-    .map((agent) => ({
-      agent,
-      role: input.roles[agent] ?? input.config.agents[agent].role,
-      model: input.config.agents[agent].model ?? null,
-      provider:
-        agent === "codex"
-          ? (input.config.agents.codex.provider ?? "default")
-          : "default",
-    }));
+  const reviewers = REAL_AGENTS.filter(
+    (agent) => input.config.agents[agent].enabled,
+  ).map((agent) => ({
+    agent,
+    role: input.roles[agent] ?? input.config.agents[agent].role,
+    model: input.config.agents[agent].model ?? null,
+    provider:
+      agent === "codex"
+        ? (input.config.agents.codex.provider ?? "default")
+        : "default",
+  }));
   const request = structuredClone(input.request);
   if (request.options) delete request.options.includeAgentRawOutputs;
 

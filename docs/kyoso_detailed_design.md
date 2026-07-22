@@ -8,37 +8,37 @@
 
 ## 0. 決定済み事項
 
-| 項目                   | 決定                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| Product name           | **Kyoso**                                                                                  |
-| README 表記            | **Kyo-so**                                                                                 |
-| 日本語名               | 協奏                                                                                       |
-| npm package            | `@kyo-so/cli`                                                                              |
-| CLI command            | `kyoso`                                                                                    |
-| Config file            | `kyoso.toml`; legacy `kyoso.config.ts` remains supported but deprecated                    |
-| Local data dir         | `.kyoso/`                                                                                  |
-| Trace storage          | trusted user state root with workspace hash (see §20)                                      |
-| Env prefix             | `KYOSO_`                                                                                   |
-| Child agent guard      | `KYOSO_CHILD_AGENT=1`                                                                      |
-| Runtime                | TypeScript + Bun                                                                           |
-| Primary client         | Codex-first                                                                                |
-| Supported client       | Claude Code supported via MCP                                                              |
-| Debug / direct usage   | CLI                                                                                        |
-| MCP tools              | `plan_review`, `security_review`, `diff_review`                                            |
-| Backend agents         | Codex ACP + Claude ACP                                                                     |
-| Agent launch           | local subprocess / stdio                                                                   |
-| Agent workspace        | temp snapshot, read-only intent                                                            |
-| Agent write permission | disabled for MVP                                                                           |
-| Agent roles            | role-specific prompts                                                                      |
-| Judge                  | deterministic aggregator + configurable judge LLM                                          |
-| Security framework     | CISA Secure by Design gate                                                                 |
-| Timeout                | per-agent configurable; defaults: Codex 600s / Claude 600s                                 |
-| Max context            | 500 KB selected file content budget                                                        |
-| Secret handling        | default block, config extensible                                                           |
-| Network                | default `model_only`; opt-in `--network unrestricted`; `mediated_web` designed but not MVP |
-| Audit                  | local JSONL; raw agent output disabled by default                                          |
-| Agent failure          | degraded result; do not hard fail if one agent succeeds                                    |
-| Skill invocation       | explicit, with recommended conditions                                                      |
+| 項目                   | 決定                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Product name           | **Kyoso**                                                                                         |
+| README 表記            | **Kyo-so**                                                                                        |
+| 日本語名               | 協奏                                                                                              |
+| npm package            | `@kyo-so/cli`                                                                                     |
+| CLI command            | `kyoso`                                                                                           |
+| Config file            | `kyoso.toml`; legacy `kyoso.config.ts` remains supported but deprecated                           |
+| Local data dir         | `.kyoso/`                                                                                         |
+| Trace storage          | trusted user state root with workspace hash (see §20)                                             |
+| Env prefix             | `KYOSO_`                                                                                          |
+| Child agent guard      | `KYOSO_CHILD_AGENT=1`                                                                             |
+| Runtime                | TypeScript + Bun                                                                                  |
+| Primary client         | Codex-first                                                                                       |
+| Supported client       | Claude Code supported via MCP                                                                     |
+| Debug / direct usage   | CLI                                                                                               |
+| MCP tools              | `plan_review`, `security_review`, `diff_review`                                                   |
+| Backend agents         | Codex ACP + Claude ACP + Gemini ACP (via a user-configured launcher, opt-in, disabled by default) |
+| Agent launch           | local subprocess / stdio                                                                          |
+| Agent workspace        | temp snapshot, read-only intent                                                                   |
+| Agent write permission | disabled for MVP                                                                                  |
+| Agent roles            | role-specific prompts                                                                             |
+| Judge                  | deterministic aggregator + configurable judge LLM                                                 |
+| Security framework     | CISA Secure by Design gate                                                                        |
+| Timeout                | per-agent configurable; defaults: Codex 600s / Claude 600s / Gemini 600s                          |
+| Max context            | 500 KB selected file content budget                                                               |
+| Secret handling        | default block, config extensible                                                                  |
+| Network                | default `model_only`; opt-in `--network unrestricted`; `mediated_web` designed but not MVP        |
+| Audit                  | local JSONL; raw agent output disabled by default                                                 |
+| Agent failure          | degraded result; do not hard fail if one agent succeeds                                           |
+| Skill invocation       | explicit, with recommended conditions                                                             |
 
 ---
 
@@ -1283,11 +1283,36 @@ Claude:
 }
 ```
 
+Gemini (disabled by default):
+
+```ts
+{
+  enabled: false,
+  // No launcher is shipped by default: supply an ACP-compatible launcher
+  // via agents.gemini.command / args in the user-global config.
+  command: "",
+  args: [],
+  role: "combined_reviewer",
+  env: {
+    KYOSO_CHILD_AGENT: "1",
+  }
+}
+```
+
+Kyoso ships no Gemini launcher: users supply an ACP-compatible launcher via
+`agents.gemini.command`/`args` in the user-global config. Because
+`command`/`args` are global-config-only fields, swapping the launcher is a
+TOML-only change with no code change required. Set
+`agents.gemini.enabled = true` to opt in; leaving it unset or `false`
+preserves the exact 2-agent (Codex/Claude) behavior.
+
 `agents.<name>.model` is optional. When omitted, Kyoso does not add any model
 override and the child adapter keeps its own default behavior. For Claude, Kyoso
 maps the value to `ANTHROPIC_MODEL` unless that env is already set. For Codex,
 Kyoso maps the value to `CODEX_CONFIG={"model":"..."}` unless `CODEX_CONFIG` is
-already set.
+already set. For Gemini, `model` is accepted by the schema but is not yet mapped
+to the launcher; it is currently a no-op until the launcher's
+model-selection contract is confirmed.
 
 `agents.<name>.effort` is optional. Unlike `model`, Kyoso does not map it to an
 env var; it sends an ACP `session/set_config_option` request
@@ -1296,7 +1321,8 @@ prompt. `configId` is `"effort"` for Claude and `"reasoning_effort"` for Codex,
 and `value` is the configured string. Valid values depend on the backend agent
 version and the selected model. Kyoso does not validate `effort` values itself;
 if the backend agent rejects or does not support the option, Kyoso logs it to
-stderr (fail-soft) and continues the session.
+stderr (fail-soft) and continues the session. Gemini has no `configId` mapping
+yet, so `agents.gemini.effort` is currently a no-op as well.
 
 If `npx` is unavailable but `bunx` is available, `doctor` should suggest config replacement. Do not silently change commands unless config says `command: "auto"`.
 
@@ -1409,7 +1435,7 @@ Backend agents should return JSON that can be parsed into:
 
 ```ts
 export type NormalizedAgentOpinion = {
-  agent: "codex" | "claude";
+  agent: "codex" | "claude" | "gemini";
   role: string;
   summary: string;
   findings: Array<{
@@ -1804,7 +1830,18 @@ Do not advertise interactive terminal auth. Kyoso is headless; Claude subscripti
 
 If both `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are set, `doctor` reports the deterministic Kyoso forwarding policy.
 
-### 19.4 Auth errors
+### 19.4 Gemini
+
+Gemini's primary auth path is whatever the user-configured launcher provides; Kyoso does not read or copy any launcher-side login cache directly.
+
+Allowed env (optional fallback only):
+
+- `GEMINI_API_KEY`
+- `GOOGLE_API_KEY`
+
+`doctor` reports whether one of these is detected as a fallback signal, and otherwise notes that Gemini auth is delegated to the configured launcher.
+
+### 19.5 Auth errors
 
 If an agent reports auth failure:
 
@@ -2594,19 +2631,19 @@ When implementing Kyoso:
 
 ## 28. Known risks and mitigations
 
-| Risk                                  | Mitigation                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| Backend agent edits files             | Use temp snapshot, deny permissions, read-only mode where supported, discard snapshot |
-| Backend agent recursively calls Kyoso | `KYOSO_CHILD_AGENT=1`, do not pass Kyoso MCP config, recursion guard                  |
-| Credentials leak to audit             | env allowlist, audit sanitizer, raw output disabled                                   |
-| Secret appears in input               | detect, redact, block by default                                                      |
-| One agent unavailable                 | degraded result                                                                       |
-| Judge hallucination                   | deterministic final decision, preserve source findings                                |
-| Config executes malicious code        | trust-on-first-use, `--ignore-config`, `--trust-config`, config hash                  |
-| Prompt injection in repo content      | `<untrusted-content>` boundaries, read-only agents, schema-constrained findings       |
-| MCP stdout polluted                   | logs to stderr only                                                                   |
-| Timeout in client                     | Codex 600s / Claude 600s agent defaults; MCP client timeout must exceed review-wide   |
-| User assumes full sandbox             | explicit docs: MVP is temp snapshot, not OS sandbox                                   |
+| Risk                                  | Mitigation                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Backend agent edits files             | Use temp snapshot, deny permissions, read-only mode where supported, discard snapshot             |
+| Backend agent recursively calls Kyoso | `KYOSO_CHILD_AGENT=1`, do not pass Kyoso MCP config, recursion guard                              |
+| Credentials leak to audit             | env allowlist, audit sanitizer, raw output disabled                                               |
+| Secret appears in input               | detect, redact, block by default                                                                  |
+| One agent unavailable                 | degraded result                                                                                   |
+| Judge hallucination                   | deterministic final decision, preserve source findings                                            |
+| Config executes malicious code        | trust-on-first-use, `--ignore-config`, `--trust-config`, config hash                              |
+| Prompt injection in repo content      | `<untrusted-content>` boundaries, read-only agents, schema-constrained findings                   |
+| MCP stdout polluted                   | logs to stderr only                                                                               |
+| Timeout in client                     | Codex 600s / Claude 600s / Gemini 600s agent defaults; MCP client timeout must exceed review-wide |
+| User assumes full sandbox             | explicit docs: MVP is temp snapshot, not OS sandbox                                               |
 
 ---
 
@@ -2614,7 +2651,7 @@ When implementing Kyoso:
 
 Do not implement now, but keep interfaces extensible for:
 
-1. Gemini ACP backend
+1. Alternative Gemini launchers, swappable via a `command`/`args` TOML change with no code update (see §13.5)
 2. `mediated_web` search provider
 3. SARIF export
 4. GitHub PR comments

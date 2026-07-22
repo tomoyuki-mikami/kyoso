@@ -14,7 +14,7 @@ Kyo-so (Kyoso / 協奏) 是面向 AI coding workflows 的 MCP-native、ACP-power
   <img src="https://raw.githubusercontent.com/hokupod/kyoso/main/docs/assets/kyoso-ensemble.png" alt="指挥家协调鼓手、小提琴手和钢琴家" width="480">
 </p>
 
-它会协调 Codex 和 Claude reviewers，用于：
+它会协调 Codex、Claude 以及(可选启用的) Gemini reviewers，用于：
 
 - implementation plan review
 - 带有 CISA Secure by Design gates 的 security review
@@ -329,9 +329,16 @@ CODEX_CONFIG = '{"model":"gpt-5.5"}'
 
 ### Agents
 
-Agent keys: `agents.<codex|claude>.<enabled|model|effort|role|timeoutS>`。legacy-compatible 的 `timeoutMs` input 仍然可用。Codex 还支持 `agents.codex.provider`：`"openrouter"` 选择 external provider，而 `"default"` 会将继承的 OpenRouter 选择重置为正常 Codex behavior；Claude 没有 provider 设置。`agents.codex.openRouter.streamIdleTimeoutS`、`streamMaxRetries` 与 `requestMaxRetries` 仅配置所选的 OpenRouter transport；`streamIdleTimeoutMs` 仍然可用。从 project 选择 provider 或更改该 retry policy 需要只能在 global config 中设置的 `agents.codex.allowProjectProvider` allowlist；完整规则请参阅 [Codex OpenRouter project opt-in](#codex-openrouter-project-opt-in)。`command` / `args` / `env` 也只能在 global config 中设置（参见 [Files and precedence](#files-and-precedence)）。
+Agent keys: `agents.<codex|claude|gemini>.<enabled|model|effort|role|timeoutS>`。legacy-compatible 的 `timeoutMs` input 仍然可用。Codex 还支持 `agents.codex.provider`：`"openrouter"` 选择 external provider，而 `"default"` 会将继承的 OpenRouter 选择重置为正常 Codex behavior；Claude 与 Gemini 没有 provider 设置。`agents.codex.openRouter.streamIdleTimeoutS`、`streamMaxRetries` 与 `requestMaxRetries` 仅配置所选的 OpenRouter transport；`streamIdleTimeoutMs` 仍然可用。从 project 选择 provider 或更改该 retry policy 需要只能在 global config 中设置的 `agents.codex.allowProjectProvider` allowlist；完整规则请参阅 [Codex OpenRouter project opt-in](#codex-openrouter-project-opt-in)。`command` / `args` / `env` 也只能在 global config 中设置（参见 [Files and precedence](#files-and-precedence)）。
 
-省略 `agents.<name>.model` 或 `agents.<name>.effort` 时，会使用各 agent 自身的 default。Codex 使用 local Codex config，例如 `~/.codex/config.toml`（若已设置`CODEX_HOME`，则为`$CODEX_HOME/config.toml`）；Claude 使用 adapter default。
+Gemini 是可选启用的第三个 reviewer，默认 disabled（`agents.gemini.enabled = false`）。设置 `agents.gemini.enabled = true` 后，它会与 Codex、Claude 一起参与；每个启用的 agent 都以各自配置的 `role` 进行 review（Gemini 默认 role 为 `combined_reviewer`），single-source finding 的验证与 disagreement 提取也会根据实际启用的 agent 数量工作，而不局限于固定的两个。Gemini 默认不附带 launcher：请在 user-global config 中通过 `agents.gemini.command` / `args` 自行提供一个 ACP 兼容的 launcher。两者都只能在 global config 中设置，因此更换 launcher 只需修改 TOML，无需改动代码。
+
+```toml
+[agents.gemini]
+enabled = true
+```
+
+省略 `agents.<name>.model` 或 `agents.<name>.effort` 时，会使用各 agent 自身的 default。Codex 使用 local Codex config，例如 `~/.codex/config.toml`（若已设置`CODEX_HOME`，则为`$CODEX_HOME/config.toml`）；Claude 与 Gemini 使用 adapter default。
 
 可指定的 model 名称请参阅 [Claude models overview](https://platform.claude.com/docs/en/about-claude/models/overview) 与 [Codex models](https://developers.openai.com/codex/models)。
 
@@ -349,8 +356,9 @@ Kyoso 会将 model pins 映射到 adapter-supported configuration：
 
 - Claude: 当 `agents.claude.env` 或 whitelisted parent env 中尚未设置时，设置 `ANTHROPIC_MODEL`。
 - Codex: 当 `CODEX_CONFIG` 尚未设置时，设置 `CODEX_CONFIG={"model":"..."}`。若要将 model pin 与其他 Codex session config 组合，请直接设置 `agents.codex.env.CODEX_CONFIG`。
+- Gemini: schema 接受 `agents.gemini.model`，但目前尚未映射到 launcher，因此暂时是 no-op。待确认 launcher 的 model 选择 contract 后会补上。
 
-effort 的工作方式不同：Kyoso 不会为它设置 env var，而是在每个 session 中、发送第一个 prompt 之前，向 backend agent 发送一次 ACP `session/set_config_option` 请求(Claude 为 `configId: "effort"`，Codex 为 `configId: "reasoning_effort"`)。有效值取决于 backend agent 的版本和所选的 model(例如，Claude 仅对支持 effort levels 的 model 公开该 option)。Kyoso 本身不会 validate `effort` 的值；如果 backend agent reject 了该请求，或不支持该 option，Kyoso 会将其记录到 stderr 并继续 review。
+effort 的工作方式不同：Kyoso 不会为它设置 env var，而是在每个 session 中、发送第一个 prompt 之前，向 backend agent 发送一次 ACP `session/set_config_option` 请求(Claude 为 `configId: "effort"`，Codex 为 `configId: "reasoning_effort"`)。有效值取决于 backend agent 的版本和所选的 model(例如，Claude 仅对支持 effort levels 的 model 公开该 option)。Kyoso 本身不会 validate `effort` 的值；如果 backend agent reject 了该请求，或不支持该 option，Kyoso 会将其记录到 stderr 并继续 review。Gemini 尚未有 `configId` 映射，因此 `agents.gemini.effort` 目前同样是 no-op。
 
 ### Codex OpenRouter project opt-in
 
@@ -419,12 +427,15 @@ Claude 支持两种 auth paths：
 
 如果同时设置了两个 Claude credentials，Kyoso 默认只将 `CLAUDE_CODE_OAUTH_TOKEN` forward 给 Claude child agent。若只想 forward `ANTHROPIC_API_KEY`，请设置 `agents.claude.auth.preferApiKey: true`。
 
+Gemini 的认证委托给所配置的 launcher。可以将 `GEMINI_API_KEY` 或 `GOOGLE_API_KEY` 设置为可选的 fallback；`kyoso doctor` 会显示检测到的是哪一个。
+
 Default child-agent env allowlist:
 
 | Agent  | Provider env                                                                                                                                                                                 |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex  | `CODEX_API_KEY`, `OPENAI_API_KEY`, `CODEX_HOME`, `CODEX_ACCESS_TOKEN`                                                                                                                        |
 | Claude | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` |
+| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY`                                                                                                                                                           |
 
 `OPENROUTER_API_KEY` 被有意排除在常规 Codex allowlist 之外。只有 `agents.codex.provider = "openrouter"` 时才从 Kyoso process copy；key 缺失或为空时不会启动 Codex child，而是返回结构化的 agent failure，其他 reviewer 可以在 degraded mode 下继续。
 
@@ -436,6 +447,7 @@ Subscription-only setup:
 
 - Codex: 使用 local `codex` login
 - Claude: 运行 `claude setup-token`，然后设置 `CLAUDE_CODE_OAUTH_TOKEN`
+- Gemini: 设置 `agents.gemini.enabled = true` 以 opt in，并使用在 user-global config 中配置的 launcher 的认证
 - Judge: 默认的 `deterministic_only` mode 不需要 API key（参见 [Judge](#judge)）
 - 如需禁用显式 LLM judge opt-in，请设置 `judge.mode = "deterministic_only"` 或 `judge.provider = "none"`
 
@@ -473,7 +485,7 @@ skipOptionalPhasesWhenTokenUsageUnknown = false
 
 seconds可以是小数，但乘以1,000后必须得到safe integer millisecond。`1.5`与`0.001`有效，`0.0001`无效。timeout必须为正数；只有`progressHeartbeatS = 0`表示禁用heartbeat。同一layer或request object同时提供两种unit时，两者都会validation，并由`S`优先。config layer precedence先执行，因此后续project或CLI的`Ms`仍会覆盖较早global的`S`。
 
-Codex 和 Claude 的default agent timeout均为600秒；verification round 默认90秒。review-wide deadline 默认660秒(`reviewBudget.maxTotalWallTimeS`)，在default并行primary phase后保留标准的60秒finalization余量。各 phase 使用剩余 deadline 而不会延长它。`kyoso doctor` 会显示已配置的顺序phase时间，以及加入10%或60秒（取较大值）余量后的review-wide建议值。只有当judge mode允许且direct provider credential可用时，才会计入LLM judge timeout。
+Codex、Claude 和 Gemini 的default agent timeout均为600秒；verification round 默认90秒。review-wide deadline 默认660秒(`reviewBudget.maxTotalWallTimeS`)，在default并行primary phase后保留标准的60秒finalization余量。各 phase 使用剩余 deadline 而不会延长它。`kyoso doctor` 会显示已配置的顺序phase时间，以及加入10%或60秒（取较大值）余量后的review-wide建议值。只有当judge mode允许且direct provider credential可用时，才会计入LLM judge timeout。
 
 本repository的primary 15分钟＋verification 15分钟dogfooding preset使用以下user-global override：
 

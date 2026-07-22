@@ -71,6 +71,26 @@ export const defaultConfig: KyosoConfigInput = {
         ],
       },
     },
+    gemini: {
+      enabled: false,
+      type: "acp",
+      // No launcher is shipped by default: supply an ACP-compatible launcher
+      // via agents.gemini.command / args in the user-global config.
+      command: "",
+      args: [],
+      role: "combined_reviewer",
+      timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
+      env: {
+        KYOSO_CHILD_AGENT: "1",
+      },
+      auth: {
+        mode: "passthrough",
+        preferExistingLogin: true,
+        preferApiKey: false,
+        recommendedEnv: [],
+        envWhitelist: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+      },
+    },
   },
   workspace: {
     mode: "temp_snapshot",

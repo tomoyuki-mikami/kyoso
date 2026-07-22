@@ -12,7 +12,7 @@ The Japanese word 協奏 translates to concerto in English: multiple independent
   <img src="https://raw.githubusercontent.com/hokupod/kyoso/main/docs/assets/kyoso-ensemble.png" alt="A conductor coordinating a drummer, a violinist, and a pianist" width="480">
 </p>
 
-It coordinates Codex and Claude reviewers for:
+It coordinates Codex, Claude, and (opt-in) Gemini reviewers for:
 
 - implementation plan review
 - security review with CISA Secure by Design gates
@@ -340,9 +340,16 @@ CODEX_CONFIG = '{"model":"gpt-5.5"}'
 
 ### Agents
 
-Agent keys: `agents.<codex|claude>.<enabled|model|effort|role|timeoutS>`. The legacy-compatible `timeoutMs` input remains accepted. Codex also supports `agents.codex.provider`: `"openrouter"` selects the external provider, while `"default"` resets an inherited OpenRouter selection to normal Codex behavior; Claude has no provider setting. `agents.codex.openRouter.streamIdleTimeoutS`, `streamMaxRetries`, and `requestMaxRetries` configure the selected OpenRouter transport only; `streamIdleTimeoutMs` remains accepted. Selecting the provider or changing that retry policy from a project requires the global-config-only `agents.codex.allowProjectProvider` allowlist; see [Codex OpenRouter project opt-in](#codex-openrouter-project-opt-in) for the full rules. The `command`, `args`, and `env` keys are also global-config-only (see [Files and precedence](#files-and-precedence)).
+Agent keys: `agents.<codex|claude|gemini>.<enabled|model|effort|role|timeoutS>`. The legacy-compatible `timeoutMs` input remains accepted. Codex also supports `agents.codex.provider`: `"openrouter"` selects the external provider, while `"default"` resets an inherited OpenRouter selection to normal Codex behavior; Claude and Gemini have no provider setting. `agents.codex.openRouter.streamIdleTimeoutS`, `streamMaxRetries`, and `requestMaxRetries` configure the selected OpenRouter transport only; `streamIdleTimeoutMs` remains accepted. Selecting the provider or changing that retry policy from a project requires the global-config-only `agents.codex.allowProjectProvider` allowlist; see [Codex OpenRouter project opt-in](#codex-openrouter-project-opt-in) for the full rules. The `command`, `args`, and `env` keys are also global-config-only (see [Files and precedence](#files-and-precedence)).
 
-Omit `agents.<name>.model` or `agents.<name>.effort` to use each agent's own default. Codex uses the local Codex config, such as `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set); Claude uses the adapter default.
+Gemini is an opt-in third reviewer and is disabled by default (`agents.gemini.enabled = false`). Set `agents.gemini.enabled = true` to add it alongside Codex and Claude; every enabled agent reviews with its configured `role` (Gemini defaults to `combined_reviewer`), and single-source finding verification and disagreement extraction work across however many agents are enabled, not just a fixed pair. No launcher is shipped for Gemini by default: supply an ACP-compatible launcher via `agents.gemini.command`/`args` in the user-global config. Both are global-config-only, so swapping the launcher is a TOML-only change with no code update required.
+
+```toml
+[agents.gemini]
+enabled = true
+```
+
+Omit `agents.<name>.model` or `agents.<name>.effort` to use each agent's own default. Codex uses the local Codex config, such as `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set); Claude and Gemini use the adapter default.
 
 For available model names, see the [Claude models overview](https://platform.claude.com/docs/en/about-claude/models/overview) and the [Codex models list](https://developers.openai.com/codex/models).
 
@@ -360,8 +367,9 @@ Kyoso maps model pins to adapter-supported configuration:
 
 - Claude: sets `ANTHROPIC_MODEL` when not already set in `agents.claude.env` or a whitelisted parent env.
 - Codex: sets `CODEX_CONFIG={"model":"..."}` when `CODEX_CONFIG` is not already set. To combine other Codex session config with a model pin, set `agents.codex.env.CODEX_CONFIG` directly.
+- Gemini: `agents.gemini.model` is accepted by the schema but is not yet mapped to the launcher, so it is currently a no-op. This will be wired up once the launcher's model-selection contract is confirmed.
 
-Effort works differently: Kyoso does not set an env var for it. Instead, it sends an ACP `session/set_config_option` request to the backend agent once per session, before the first prompt: `configId: "effort"` for Claude, `configId: "reasoning_effort"` for Codex. Valid values depend on the backend agent version and the selected model (for example, Claude only exposes effort levels for models that support them). Kyoso does not validate `effort` values itself; if the backend agent rejects the request or does not support it, Kyoso logs it to stderr and continues the review.
+Effort works differently: Kyoso does not set an env var for it. Instead, it sends an ACP `session/set_config_option` request to the backend agent once per session, before the first prompt: `configId: "effort"` for Claude, `configId: "reasoning_effort"` for Codex. Valid values depend on the backend agent version and the selected model (for example, Claude only exposes effort levels for models that support them). Kyoso does not validate `effort` values itself; if the backend agent rejects the request or does not support it, Kyoso logs it to stderr and continues the review. Gemini has no `configId` mapping yet, so `agents.gemini.effort` is currently a no-op as well.
 
 ### Codex OpenRouter project opt-in
 
@@ -430,12 +438,15 @@ Claude supports two auth paths:
 
 If both Claude credentials are set, Kyoso forwards only `CLAUDE_CODE_OAUTH_TOKEN` to the Claude child agent by default. Set `agents.claude.auth.preferApiKey: true` to forward only `ANTHROPIC_API_KEY`.
 
+Gemini delegates authentication to the configured launcher. `GEMINI_API_KEY` or `GOOGLE_API_KEY` can be set as an optional fallback; `kyoso doctor` reports which one it detects.
+
 Default child-agent env allowlist:
 
 | Agent  | Provider env                                                                                                                                                                                 |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex  | `CODEX_API_KEY`, `OPENAI_API_KEY`, `CODEX_HOME`, `CODEX_ACCESS_TOKEN`                                                                                                                        |
 | Claude | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` |
+| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY`                                                                                                                                                           |
 
 `OPENROUTER_API_KEY` is deliberately absent from the normal Codex allowlist. It is copied from the Kyoso process only for `agents.codex.provider = "openrouter"`; a missing or empty key prevents the Codex child from starting and returns a structured failed agent result, allowing another reviewer to continue in degraded mode.
 
@@ -447,6 +458,7 @@ Subscription-only setup:
 
 - Codex: use local `codex` login
 - Claude: run `claude setup-token`, then set `CLAUDE_CODE_OAUTH_TOKEN`
+- Gemini: opt in with `agents.gemini.enabled = true` and use the authentication of the launcher configured in the user-global config
 - Judge: the default `deterministic_only` mode needs no API key (see [Judge](#judge))
 - To disable an explicit LLM-judge opt-in, set `judge.mode = "deterministic_only"` or `judge.provider = "none"`
 
@@ -484,7 +496,7 @@ Prefer numeric seconds inputs: agent `timeoutS`, OpenRouter `streamIdleTimeoutS`
 
 Seconds may be fractional only when multiplication by 1,000 produces a safe integer number of milliseconds: `1.5` and `0.001` are valid, while `0.0001` is not. Timeouts are positive; only `progressHeartbeatS = 0` disables heartbeat. When both units appear in one layer or request object, both values are validated and `S` wins. Config layer precedence is applied first, so a later project or CLI `Ms` value still overrides an earlier global `S` value.
 
-Default agent timeouts are 600 seconds for both Codex and Claude; the verification round defaults to 90 seconds. The review-wide deadline defaults to 660 seconds (`reviewBudget.maxTotalWallTimeS`), leaving the standard 60-second finalization margin after the default parallel primary phase. Each phase uses the remaining deadline rather than extending it. `kyoso doctor` reports the configured sequential phase time and a recommended review-wide deadline with a 10% or 60-second margin, whichever is larger. It includes an LLM judge timeout only when the judge mode permits it and a direct-provider credential is available.
+Default agent timeouts are 600 seconds for Codex, Claude, and Gemini; the verification round defaults to 90 seconds. The review-wide deadline defaults to 660 seconds (`reviewBudget.maxTotalWallTimeS`), leaving the standard 60-second finalization margin after the default parallel primary phase. Each phase uses the remaining deadline rather than extending it. `kyoso doctor` reports the configured sequential phase time and a recommended review-wide deadline with a 10% or 60-second margin, whichever is larger. It includes an LLM judge timeout only when the judge mode permits it and a direct-provider credential is available.
 
 This repository's 15-minute primary plus 15-minute verification dogfooding preset uses the following user-global override:
 

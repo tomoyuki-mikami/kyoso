@@ -14,7 +14,7 @@ Kyo-so (Kyoso / 協奏) は、AI coding workflow 向けの MCP-native、ACP-powe
   <img src="https://raw.githubusercontent.com/hokupod/kyoso/main/docs/assets/kyoso-ensemble.png" alt="指揮者がドラマー・バイオリニスト・ピアニストをまとめる様子" width="480">
 </p>
 
-Kyo-so は Codex と Claude の reviewer を連携させ、次のレビューを行います。
+Kyo-so は Codex、Claude、そして(オプトインの) Gemini の reviewer を連携させ、次のレビューを行います。
 
 - implementation plan review
 - CISA Secure by Design gate による security review
@@ -329,9 +329,16 @@ CODEX_CONFIG = '{"model":"gpt-5.5"}'
 
 ### Agents
 
-Agent keys: `agents.<codex|claude>.<enabled|model|effort|role|timeoutS>`。legacy-compatibleな`timeoutMs` inputも引き続き受理します。Codexには`agents.codex.provider`もあり、`"openrouter"`はexternal providerを選択し、`"default"`は継承したOpenRouter選択を通常のCodex behaviorへ戻します。Claudeにprovider設定はありません。`agents.codex.openRouter.streamIdleTimeoutS`、`streamMaxRetries`、`requestMaxRetries`は、選択したOpenRouter transportだけを設定し、`streamIdleTimeoutMs`も引き続き受理します。projectから`provider`を選択、またはそのretry policyを変更するには、global config専用の`agents.codex.allowProjectProvider` allowlistが必要です。詳細な規則は [Codex の OpenRouter project opt-in](#codex-の-openrouter-project-opt-in) を参照してください。`command` / `args` / `env`もglobal config専用です([Files and precedence](#files-and-precedence) を参照)。
+Agent keys: `agents.<codex|claude|gemini>.<enabled|model|effort|role|timeoutS>`。legacy-compatibleな`timeoutMs` inputも引き続き受理します。Codexには`agents.codex.provider`もあり、`"openrouter"`はexternal providerを選択し、`"default"`は継承したOpenRouter選択を通常のCodex behaviorへ戻します。Claude と Gemini に provider 設定はありません。`agents.codex.openRouter.streamIdleTimeoutS`、`streamMaxRetries`、`requestMaxRetries`は、選択したOpenRouter transportだけを設定し、`streamIdleTimeoutMs`も引き続き受理します。projectから`provider`を選択、またはそのretry policyを変更するには、global config専用の`agents.codex.allowProjectProvider` allowlistが必要です。詳細な規則は [Codex の OpenRouter project opt-in](#codex-の-openrouter-project-opt-in) を参照してください。`command` / `args` / `env`もglobal config専用です([Files and precedence](#files-and-precedence) を参照)。
 
-`agents.<name>.model` または `agents.<name>.effort` を省略すると、各 agent 独自の default を使用します。Codex は `~/.codex/config.toml`（`CODEX_HOME`を設定している場合は`$CODEX_HOME/config.toml`）などの local Codex config を使用し、Claude は adapter default を使用します。
+Gemini はオプトインの第三の reviewer で、default では disabled です(`agents.gemini.enabled = false`)。`agents.gemini.enabled = true` を設定すると Codex・Claude に加えて参加し、有効な agent はそれぞれの設定済み `role` でレビューします(Gemini の default role は `combined_reviewer`)。single-source finding の検証や disagreement 抽出も、固定された 2 体ではなく有効な agent の数に応じて動作します。Gemini の launcher は default では未設定です。global config の `agents.gemini.command` / `args` に ACP 互換の launcher を各自で設定してください。これらは global config専用なので、launcher の差し替えは TOML のみの変更で済み、コード変更は不要です。
+
+```toml
+[agents.gemini]
+enabled = true
+```
+
+`agents.<name>.model` または `agents.<name>.effort` を省略すると、各 agent 独自の default を使用します。Codex は `~/.codex/config.toml`（`CODEX_HOME`を設定している場合は`$CODEX_HOME/config.toml`）などの local Codex config を使用し、Claude と Gemini は adapter default を使用します。
 
 指定できる model 名は [Claude models overview](https://platform.claude.com/docs/en/about-claude/models/overview) と [Codex models](https://developers.openai.com/codex/models) を参照してください。
 
@@ -349,8 +356,9 @@ Kyoso は model pins を adapter-supported configuration に mapping します�
 
 - Claude: `agents.claude.env` または whitelisted parent env で未設定の場合に `ANTHROPIC_MODEL` を設定します。
 - Codex: `CODEX_CONFIG` が未設定の場合、`CODEX_CONFIG={"model":"..."}` を設定します。model pin と他の Codex session config を組み合わせるには、`agents.codex.env.CODEX_CONFIG` を直接設定してください。
+- Gemini: `agents.gemini.model` は schema上受け付けられますが、launcher へはまだ mapping されておらず、現時点では no-op です。launcher 側の model 選択の contract が確定次第 対応予定です。
 
-effort は仕組みが異なります。Kyoso は env var を設定せず、session ごとに最初の prompt の前に一度、backend agent へ ACP の `session/set_config_option` リクエストを送信します(Claude は `configId: "effort"`、Codex は `configId: "reasoning_effort"`)。有効な値は backend agent のバージョンと選択した model に依存します(例えば Claude は effort levels に対応した model でのみこの option を公開します)。Kyoso は `effort` の値自体を validate しません。backend agent がリクエストを reject した場合、または対応していない場合、Kyoso は stderr に log を出力してレビューを継続します。
+effort は仕組みが異なります。Kyoso は env var を設定せず、session ごとに最初の prompt の前に一度、backend agent へ ACP の `session/set_config_option` リクエストを送信します(Claude は `configId: "effort"`、Codex は `configId: "reasoning_effort"`)。有効な値は backend agent のバージョンと選択した model に依存します(例えば Claude は effort levels に対応した model でのみこの option を公開します)。Kyoso は `effort` の値自体を validate しません。backend agent がリクエストを reject した場合、または対応していない場合、Kyoso は stderr に log を出力してレビューを継続します。Gemini には `configId` の mapping がまだないため、`agents.gemini.effort` も同様に現時点では no-op です。
 
 ### Codex の OpenRouter project opt-in
 
@@ -419,12 +427,15 @@ Claude は 2 つの auth paths をサポートします。
 
 Claude credentials が両方設定されている場合、Kyoso は既定で `CLAUDE_CODE_OAUTH_TOKEN` だけを Claude child agent に forward します。`ANTHROPIC_API_KEY` だけを forward するには、`agents.claude.auth.preferApiKey: true` を設定してください。
 
+Gemini の認証は設定した launcher に委譲されます。`GEMINI_API_KEY` または `GOOGLE_API_KEY` を optional な fallback として設定でき、`kyoso doctor` はどちらを検出したか表示します。
+
 Default child-agent env allowlist:
 
 | Agent  | Provider env                                                                                                                                                                                 |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Codex  | `CODEX_API_KEY`, `OPENAI_API_KEY`, `CODEX_HOME`, `CODEX_ACCESS_TOKEN`                                                                                                                        |
 | Claude | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` |
+| Gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY`                                                                                                                                                           |
 
 `OPENROUTER_API_KEY`は通常のCodex allowlistには意図的に含めません。`agents.codex.provider = "openrouter"`の場合だけKyoso processからcopyし、keyがないか空の場合はCodex childを起動せず、構造化されたagent failureとして返します。別reviewerはdegraded modeで継続できます。
 
@@ -436,6 +447,7 @@ Subscription-only setup:
 
 - Codex: local `codex` login を使用
 - Claude: `claude setup-token` を実行し、`CLAUDE_CODE_OAUTH_TOKEN` を設定
+- Gemini: `agents.gemini.enabled = true` で opt in し、global config で設定した launcher の認証を使用
 - Judge: default の `deterministic_only` mode は API key を必要としません([Judge](#judge) を参照)
 - 明示的な LLM judge opt-in を無効化するには、`judge.mode = "deterministic_only"` または `judge.provider = "none"` を設定
 
@@ -473,7 +485,7 @@ skipOptionalPhasesWhenTokenUsageUnknown = false
 
 secondsの小数は、1,000倍した値がsafe integer millisecondになる場合だけ受理します。`1.5`と`0.001`は有効ですが、`0.0001`は無効です。timeoutは正数で、`progressHeartbeatS = 0`だけがheartbeat無効化を表します。同じlayerまたはrequest objectに両unitがある場合は両方をvalidationして`S`を優先します。config layer precedenceを先に適用するため、後段のprojectまたはCLIの`Ms`は、前段globalの`S`より優先されます。
 
-Default agent timeout は Codex / Claude ともに600秒です。verification round の default は 90 秒です。review全体のdeadlineは既定660秒(`reviewBudget.maxTotalWallTimeS`)で、defaultの並列primary phase後に標準の60秒のfinalization余裕を確保します。各phaseはdeadlineを延長せず残り時間を使います。`kyoso doctor` は設定済みの直列phase時間と、10%または60秒の大きい方を余裕として加えたreview-wide推奨値を表示します。LLM judge timeoutは、judge modeが許し、direct provider credentialが利用できる場合だけ加算します。
+Default agent timeout は Codex / Claude / Gemini いずれも600秒です。verification round の default は 90 秒です。review全体のdeadlineは既定660秒(`reviewBudget.maxTotalWallTimeS`)で、defaultの並列primary phase後に標準の60秒のfinalization余裕を確保します。各phaseはdeadlineを延長せず残り時間を使います。`kyoso doctor` は設定済みの直列phase時間と、10%または60秒の大きい方を余裕として加えたreview-wide推奨値を表示します。LLM judge timeoutは、judge modeが許し、direct provider credentialが利用できる場合だけ加算します。
 
 このrepositoryのprimary 15分＋verification 15分のdogfooding presetでは、次のuser-global overrideを使います。
 

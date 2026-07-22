@@ -20,7 +20,7 @@ export type VerificationSelection = {
   overflow: VerificationTarget[];
 };
 
-const REAL_AGENTS: AgentName[] = ["codex", "claude"];
+const REAL_AGENTS: AgentName[] = ["codex", "claude", "gemini"];
 const VERIFIABLE_SEVERITIES = new Set(["critical", "high"]);
 
 export function selectVerificationTargets(

@@ -530,6 +530,41 @@ model = "openai/o4-mini\\u001b[31m\\nforged"
     );
   });
 
+  test("shows Gemini diagnostics with the default unset command (AC6)", async () => {
+    const context = await doctorFixture();
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain("Gemini: not configured");
+    expect(output).toContain(
+      "command: (unset; set agents.gemini.command in the user-global config)",
+    );
+    expect(output).toContain(
+      "auth: delegated to the configured launcher; GEMINI_API_KEY or GOOGLE_API_KEY can be set as an optional fallback",
+    );
+  });
+
+  test("detects GEMINI_API_KEY as an optional fallback auth signal for Gemini", async () => {
+    const context = await doctorFixture();
+    context.env.GEMINI_API_KEY = "test-gemini-key";
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain(
+      "auth: detected GEMINI_API_KEY (optional fallback)",
+    );
+  });
+
   test("keeps doctor best-effort for legacy and relative project provider allowlists", async () => {
     const cases = [
       {

@@ -13,6 +13,7 @@ import {
   CODEX_OPENROUTER_PROVIDER,
   type KyosoConfig,
 } from "../config/schema.js";
+import type { AgentName } from "../core/types.js";
 import { resolveJudgeCallRoute } from "../judge/provider.js";
 import { sanitizeTextForDisplay } from "../security/sanitizeText.js";
 import {
@@ -43,6 +44,13 @@ import {
   type ManualMcpStatus,
   type SetupDetection,
 } from "./setup.js";
+
+const REAL_AGENTS: AgentName[] = ["codex", "claude", "gemini"];
+const AGENT_DISPLAY_NAMES: Record<AgentName, string> = {
+  codex: "Codex",
+  claude: "Claude",
+  gemini: "Gemini",
+};
 
 export async function runDoctor(options: {
   cwd: string;
@@ -175,17 +183,26 @@ export async function runDoctor(options: {
       "  note: user-global config is not reflected; all agent diagnostics below use safe defaults.",
     );
   }
-  const agentCommandExists = {
-    codex: commandExists(loaded.config.agents.codex.command, env),
-    claude: commandExists(loaded.config.agents.claude.command, env),
-  };
-  for (const agent of ["codex", "claude"] as const) {
+  const agentCommandExists = Object.fromEntries(
+    REAL_AGENTS.map((agent) => [
+      agent,
+      commandExists(loaded.config.agents[agent].command, env),
+    ]),
+  ) as Record<AgentName, boolean>;
+  for (const agent of REAL_AGENTS) {
     const config = loaded.config.agents[agent];
     const exists = agentCommandExists[agent];
-    lines.push(
-      `  ${agent === "codex" ? "Codex" : "Claude"}: ${exists ? "ok" : "warning command not found"}`,
-    );
-    lines.push(`    command: ${[config.command, ...config.args].join(" ")}`);
+    if (config.command === "") {
+      lines.push(`  ${AGENT_DISPLAY_NAMES[agent]}: not configured`);
+      lines.push(
+        `    command: (unset; set agents.${agent}.command in the user-global config)`,
+      );
+    } else {
+      lines.push(
+        `  ${AGENT_DISPLAY_NAMES[agent]}: ${exists ? "ok" : "warning command not found"}`,
+      );
+      lines.push(`    command: ${[config.command, ...config.args].join(" ")}`);
+    }
     if (
       !configValidationFallback &&
       !exists &&
@@ -280,15 +297,40 @@ export async function runDoctor(options: {
       } else {
         lines.push("    auth: detected Anthropic API key");
       }
+    } else if (agent === "gemini") {
+      const hasGeminiKey = hasUsableEnvValue(env, "GEMINI_API_KEY");
+      const hasGoogleKey = hasUsableEnvValue(env, "GOOGLE_API_KEY");
+      if (hasGeminiKey || hasGoogleKey) {
+        lines.push(
+          `    auth: detected ${hasGeminiKey ? "GEMINI_API_KEY" : "GOOGLE_API_KEY"} (optional fallback)`,
+        );
+      } else {
+        lines.push(
+          "    auth: delegated to the configured launcher; GEMINI_API_KEY or GOOGLE_API_KEY can be set as an optional fallback",
+        );
+      }
     } else {
       lines.push("    auth: detected or delegated");
     }
   }
-  if (agentCommandExists.codex !== agentCommandExists.claude) {
-    const missing = agentCommandExists.codex ? "claude" : "codex";
-    const remaining = agentCommandExists.codex ? "codex" : "claude";
+  const consideredAgents = REAL_AGENTS.filter(
+    (agent) => loaded.config.agents[agent].enabled,
+  );
+  const existingConsideredAgents = consideredAgents.filter(
+    (agent) => agentCommandExists[agent],
+  );
+  const missingConsideredAgents = consideredAgents.filter(
+    (agent) => !agentCommandExists[agent],
+  );
+  if (
+    existingConsideredAgents.length === 1 &&
+    missingConsideredAgents.length > 0
+  ) {
+    const disableHints = missingConsideredAgents
+      .map((agent) => `agents.${agent}.enabled: false`)
+      .join(", ");
     lines.push(
-      `  single-agent mode: set agents.${missing}.enabled: false to use ${remaining} only; the remaining agent will cover both review roles.`,
+      `  single-agent mode: set ${disableHints} to use ${existingConsideredAgents[0]} only; the remaining agent will cover both review roles.`,
     );
   }
 

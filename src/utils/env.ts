@@ -315,6 +315,11 @@ function applyQwenOpenRouterConfig(
   for (const key of QWEN_EXCLUDED_CREDENTIAL_ENV_KEYS) {
     delete env[key];
   }
+
+  // Qwen Code's headless OpenAI-compatible auth reads OPENAI_API_KEY, not
+  // OPENROUTER_API_KEY. The base URL above is pinned to OpenRouter, so the
+  // key can only reach openrouter.ai.
+  env.OPENAI_API_KEY = env[OPENROUTER_API_KEY_ENV];
 }
 
 function applyModelConfig(

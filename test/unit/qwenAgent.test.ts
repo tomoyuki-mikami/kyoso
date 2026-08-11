@@ -15,6 +15,8 @@ describe("qwen agent config", () => {
       "-y",
       "@qwen-code/qwen-code@0.21.9",
       "--acp",
+      "--auth-type",
+      "openai",
     ]);
     expect(parsed.agents.qwen.role).toBe("implementation_reviewer");
     expect(parsed.agents.qwen.auth.envWhitelist).toEqual([
@@ -63,6 +65,7 @@ describe("qwen child environment", () => {
     );
 
     expect(context.env.OPENROUTER_API_KEY).toBe(key);
+    expect(context.env.OPENAI_API_KEY).toBe(key);
     expect(context.env.OPENAI_BASE_URL).toBe("https://openrouter.ai/api/v1");
     expect(context.executionIdentity).toEqual({
       providerRoute: "openrouter",
@@ -96,7 +99,9 @@ describe("qwen child environment", () => {
     );
 
     expect(env.OPENROUTER_API_KEY).toBe("key");
-    expect(env.OPENAI_API_KEY).toBeUndefined();
+    // The foreign OPENAI_API_KEY is stripped, then replaced with the
+    // OpenRouter key so Qwen Code's OpenAI-compatible auth can read it.
+    expect(env.OPENAI_API_KEY).toBe("key");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CODEX_API_KEY).toBeUndefined();
     expect(env.CODEX_ACCESS_TOKEN).toBeUndefined();

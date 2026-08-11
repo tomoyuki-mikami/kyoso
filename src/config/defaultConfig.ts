@@ -79,7 +79,15 @@ export const defaultConfig: KyosoConfigInput = {
       command: "npx",
       // Pinned on purpose: adapters are fetched at runtime on user machines,
       // so updates must go through a deliberate kyoso release.
-      args: ["-y", "@qwen-code/qwen-code@0.21.9", "--acp"],
+      // --auth-type openai selects the OpenAI-compatible auth path regardless
+      // of the user's ~/.qwen/settings.json; headless runs fail without it.
+      args: [
+        "-y",
+        "@qwen-code/qwen-code@0.21.9",
+        "--acp",
+        "--auth-type",
+        "openai",
+      ],
       role: "implementation_reviewer",
       timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
       env: {

@@ -7,6 +7,10 @@ const PROJECT_GLOBAL_ONLY_REASONS: Record<string, string> = {
   "tools.planReview": "must be a user-global tool availability policy",
   "tools.securityReview": "must be a user-global tool availability policy",
   "tools.diffReview": "must be a user-global tool availability policy",
+  "agents.qwen.enabled":
+    "must be enabled in the user global config because it spends the user's OpenRouter credit",
+  "agents.qwen.model":
+    "must be set in the user global config because it selects the OpenRouter-billed model",
 };
 
 type ProjectScopeOptions = {
@@ -37,6 +41,10 @@ export const kyosoConfigOverridePaths = [
   "agents.claude.role",
   "agents.claude.timeoutMs",
   "agents.claude.timeoutS",
+  "agents.qwen.effort",
+  "agents.qwen.role",
+  "agents.qwen.timeoutMs",
+  "agents.qwen.timeoutS",
   "verification.enabled",
   "verification.maxFindings",
   "verification.timeoutMs",

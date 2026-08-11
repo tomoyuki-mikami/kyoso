@@ -39,10 +39,10 @@ export class FakeAgentManager extends BaseAcpAgentManager {
 
   constructor(
     private readonly scenarios: Partial<
-      Record<"codex" | "claude", FakeAgentScenario>
+      Record<"codex" | "claude" | "qwen", FakeAgentScenario>
     > = {},
     private readonly verifierScenarios: Partial<
-      Record<"codex" | "claude", FakeVerifierScenario>
+      Record<"codex" | "claude" | "qwen", FakeVerifierScenario>
     > = {},
   ) {
     super();
@@ -209,7 +209,7 @@ function findingIdsFromPrompt(prompt: string): string[] {
 }
 
 function buildOpinion(
-  agent: "codex" | "claude",
+  agent: "codex" | "claude" | "qwen",
   role: string,
   tool: "plan_review" | "security_review" | "diff_review",
 ): NormalizedAgentOpinion {

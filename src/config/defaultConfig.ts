@@ -71,6 +71,28 @@ export const defaultConfig: KyosoConfigInput = {
         ],
       },
     },
+    qwen: {
+      // Disabled by default: enabling Qwen starts a third OpenRouter-billed
+      // reviewer and downloads the pinned adapter package on first run.
+      enabled: false,
+      type: "acp",
+      command: "npx",
+      // Pinned on purpose: adapters are fetched at runtime on user machines,
+      // so updates must go through a deliberate kyoso release.
+      args: ["-y", "@qwen-code/qwen-code@0.21.9", "--acp"],
+      role: "implementation_reviewer",
+      timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
+      env: {
+        KYOSO_CHILD_AGENT: "1",
+      },
+      auth: {
+        mode: "passthrough",
+        preferExistingLogin: true,
+        preferApiKey: false,
+        recommendedEnv: ["OPENROUTER_API_KEY"],
+        envWhitelist: ["OPENROUTER_API_KEY"],
+      },
+    },
   },
   workspace: {
     mode: "temp_snapshot",

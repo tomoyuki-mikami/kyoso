@@ -98,13 +98,14 @@ describe("config time unit normalization", () => {
           openRouter: { streamIdleTimeoutS: 2 },
         },
         claude: { timeoutS: 3 },
+        qwen: { timeoutS: 7 },
       },
       judge: { timeoutS: 4 },
       verification: { timeoutS: 5 },
       reviewBudget: { maxTotalWallTimeS: 6 },
     };
 
-    expect(configTimeUnitPairs).toHaveLength(6);
+    expect(configTimeUnitPairs).toHaveLength(7);
     expect(normalizeConfigTimeUnits(input)).toEqual({
       agents: {
         codex: {
@@ -112,6 +113,7 @@ describe("config time unit normalization", () => {
           openRouter: { streamIdleTimeoutMs: 2_000 },
         },
         claude: { timeoutMs: 3_000 },
+        qwen: { timeoutMs: 7_000 },
       },
       judge: { timeoutMs: 4_000 },
       verification: { timeoutMs: 5_000 },

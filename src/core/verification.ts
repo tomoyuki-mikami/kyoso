@@ -2,6 +2,7 @@ import { extractFirstJsonObject } from "../acp/normalize.js";
 import { compareSeverity } from "../aggregate/severity.js";
 import { sanitizeText } from "../security/sanitizeText.js";
 import type { AgentName, KyosoFinding } from "./types.js";
+import { AGENT_NAMES } from "./types.js";
 
 export type VerificationVerdict = {
   findingId: string;
@@ -20,7 +21,10 @@ export type VerificationSelection = {
   overflow: VerificationTarget[];
 };
 
-const REAL_AGENTS: AgentName[] = ["codex", "claude"];
+// Order matters: for a single-source finding the verifier is the first real
+// agent that is not the source, which keeps the existing codex/claude
+// pairing unchanged when qwen is disabled.
+const REAL_AGENTS: AgentName[] = [...AGENT_NAMES];
 const VERIFIABLE_SEVERITIES = new Set(["critical", "high"]);
 
 export function selectVerificationTargets(

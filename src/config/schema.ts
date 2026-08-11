@@ -97,6 +97,21 @@ const codexAgentSchema = baseAgentSchema
     });
   });
 
+export const QWEN_MODEL_REQUIRED_ISSUE = "qwen_model_required" as const;
+
+const qwenAgentSchema = baseAgentSchema.superRefine((agent, context) => {
+  if (!agent.enabled || (agent.model?.trim().length ?? 0) > 0) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["model"],
+    message:
+      "model must be a non-empty OpenRouter model ID when agents.qwen.enabled is true.",
+    params: {
+      kyosoIssue: QWEN_MODEL_REQUIRED_ISSUE,
+    },
+  });
+});
+
 const reviewBudgetSchema = z.object({
   maxModelCalls: z.number().int().positive(),
   maxTotalWallTimeMs: z.number().int().positive(),
@@ -125,6 +140,7 @@ export const kyosoConfigSchema = z
     agents: z.object({
       codex: codexAgentSchema,
       claude: baseAgentSchema,
+      qwen: qwenAgentSchema,
     }),
     workspace: z.object({
       mode: z.literal("temp_snapshot"),
@@ -207,7 +223,7 @@ export const kyosoConfigSchema = z
     }
   });
 
-function agentConfigLeafPaths(agent: "codex" | "claude"): string[] {
+function agentConfigLeafPaths(agent: "codex" | "claude" | "qwen"): string[] {
   const paths = [
     `agents.${agent}.enabled`,
     `agents.${agent}.type`,
@@ -249,6 +265,7 @@ export const kyosoConfigKnownLeafPaths = [
   "reviewPolicy.multiAgentRequired",
   ...agentConfigLeafPaths("codex"),
   ...agentConfigLeafPaths("claude"),
+  ...agentConfigLeafPaths("qwen"),
   "workspace.mode",
   "workspace.root",
   "workspace.readOnly",
@@ -294,11 +311,13 @@ export const kyosoConfigKnownLeafPaths = [
 export const kyosoConfigRecordPrefixes = [
   "agents.codex.env",
   "agents.claude.env",
+  "agents.qwen.env",
 ];
 
 export const kyosoConfigSecuritySensitivePrefixes = [
   "agents.codex",
   "agents.claude",
+  "agents.qwen",
   "audit",
   "judge",
   "network",
@@ -320,6 +339,9 @@ export type KyosoConfigInput = PartialDeep<KyosoConfig> & {
       };
     };
     claude?: {
+      timeoutS?: number;
+    };
+    qwen?: {
       timeoutS?: number;
     };
   };

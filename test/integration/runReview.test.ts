@@ -2860,6 +2860,7 @@ export default {};
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3038,6 +3039,7 @@ export default {};
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3176,6 +3178,7 @@ export default {};
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3413,6 +3416,7 @@ effort = "${rawEffortValue}"
         timeoutMs: 5_000,
       },
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3499,6 +3503,7 @@ setInterval(() => {}, 1000);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3542,6 +3547,7 @@ process.exit(1);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3593,6 +3599,7 @@ process.exit(1);
     const config: KyosoConfig = {
       ...baseConfig,
       agents: {
+        ...baseConfig.agents,
         codex: {
           ...baseConfig.agents.codex,
           command: "bun",
@@ -3704,6 +3711,7 @@ function singleAgentConfig(agent: "codex" | "claude"): KyosoConfig {
   return {
     ...baseConfig,
     agents: {
+      ...baseConfig.agents,
       codex: {
         ...baseConfig.agents.codex,
         enabled: agent === "codex",

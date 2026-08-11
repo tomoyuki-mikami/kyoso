@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add Qwen Code ACP as an optional third review agent (`agents.qwen`), disabled
+  by default. It routes through OpenRouter with its own `OPENROUTER_API_KEY`
+  forwarding, requires `agents.qwen.model` when enabled, and pins the adapter
+  to `@qwen-code/qwen-code@0.21.9`. `kyoso doctor` reports its status without
+  printing credential values.
+
 ### Changed
 
 - Promote the Marketplace Plugin to `0.7.15` and pin its Codex and Claude Code

@@ -65,7 +65,7 @@ export type AggregatedReview = {
   openQuestions: string[];
   disagreements: Array<{
     topic: string;
-    positions: Array<{ agent: "codex" | "claude"; opinion: string }>;
+    positions: Array<{ agent: AgentName; opinion: string }>;
     judgeComment: string;
   }>;
 };

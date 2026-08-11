@@ -117,6 +117,7 @@ describe("config", () => {
     const parsed = kyosoConfigSchema.parse({
       ...defaultConfig,
       agents: {
+        ...defaultConfig.agents,
         codex: { ...defaultConfig.agents?.codex, timeoutMs: undefined },
         claude: { ...defaultConfig.agents?.claude, timeoutMs: undefined },
       },

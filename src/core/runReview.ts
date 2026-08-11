@@ -53,6 +53,7 @@ import type {
   ReviewTool,
   SecretScanResult,
 } from "./types.js";
+import { AGENT_NAMES } from "./types.js";
 import { normalizeModelExecutionIdentity } from "./modelExecutionIdentity.js";
 import { validateReviewRequest } from "./validateRequest.js";
 import {
@@ -596,6 +597,9 @@ export async function runReview(
             networkMode,
             cisaPolicy: loaded.config.securityReview.cisaSecureByDesign,
             additionalLenses: loaded.config.reviewPolicy.additionalLenses,
+            qwenAgent: loaded.config.agents.qwen.enabled
+              ? { role: loaded.config.agents.qwen.role }
+              : undefined,
             secretScan,
             warnings,
             budgetTracker,
@@ -690,7 +694,7 @@ export async function runReview(
           `Agent ${result.agent} reported ${result.reportedFindings} findings, above the soft target of ${reviewBudget.maxFindingsPerAgent}; all findings were retained.`,
         );
       }
-      const enabledAgents = (["codex", "claude"] as const).filter(
+      const enabledAgents = AGENT_NAMES.filter(
         (agent) => loaded.config.agents[agent].enabled,
       );
       const agentsUsed = normalizedAgentResults
@@ -1584,7 +1588,7 @@ async function runAgents(input: {
   progressHeartbeatMs?: number;
 }): Promise<AgentRunResult[]> {
   const agentRoles = resolveAgentRoles(input.config);
-  const enabledAgents = (["codex", "claude"] as const).filter(
+  const enabledAgents = AGENT_NAMES.filter(
     (agent) => input.config.agents[agent].enabled,
   );
   const openRouter = input.config.agents.codex.openRouter;
@@ -2190,7 +2194,7 @@ function isPreflightAgentFailure(result: AgentRunResult): boolean {
 function resolveAgentRoles(
   config: KyosoConfig,
 ): Partial<Record<AgentName, AgentRole>> {
-  const enabledAgents = (["codex", "claude"] as const).filter(
+  const enabledAgents = AGENT_NAMES.filter(
     (agent) => config.agents[agent].enabled,
   );
   const singleAgentMode = enabledAgents.length === 1;
@@ -2342,6 +2346,7 @@ async function buildSecretBlockResult(input: {
   networkMode: "model_only" | "unrestricted";
   cisaPolicy: KyosoConfig["securityReview"]["cisaSecureByDesign"];
   additionalLenses: ReviewLens[];
+  qwenAgent?: { role: AgentRole };
   secretScan: SecretScanResult;
   warnings: string[];
   budgetTracker: ReviewBudgetTracker;
@@ -2401,6 +2406,16 @@ async function buildSecretBlockResult(input: {
         summary: "Skipped because Kyoso blocked detected secrets.",
         status: "skipped",
       },
+      ...(input.qwenAgent
+        ? [
+            {
+              agent: "qwen" as const,
+              role: input.qwenAgent.role,
+              summary: "Skipped because Kyoso blocked detected secrets.",
+              status: "skipped" as const,
+            },
+          ]
+        : []),
     ],
     audit: {
       traceId: input.traceId,

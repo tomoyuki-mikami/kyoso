@@ -247,6 +247,45 @@ timeoutMs = 200000
     expect(withCredential).not.toContain("doctor-test-key");
   });
 
+  test("shows Qwen as disabled by default and reports its auth without leaking the key", async () => {
+    const context = await doctorFixture();
+
+    const disabled = await runDoctor({
+      cwd: context.cwd,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+    expect(disabled).toContain("Qwen: disabled");
+    expect(disabled).toContain("set agents.qwen.enabled = true");
+
+    const qwenKey = "qwen-openrouter-test-key-must-not-appear";
+    await mkdir(join(context.home, ".config", "kyoso"), { recursive: true });
+    await writeFile(
+      join(context.home, ".config", "kyoso", "config.toml"),
+      '[agents.qwen]\nenabled = true\nmodel = "qwen/qwen3-coder"\n',
+      "utf8",
+    );
+
+    const detected = await runDoctor({
+      cwd: context.cwd,
+      env: { ...context.env, OPENROUTER_API_KEY: qwenKey },
+      pluginInspector: () => pluginUnsupported,
+    });
+    expect(detected).toContain("Qwen:");
+    expect(detected).toContain("model: qwen/qwen3-coder");
+    expect(detected).toContain("auth: detected OPENROUTER_API_KEY");
+    expect(detected).not.toContain(qwenKey);
+
+    const missing = await runDoctor({
+      cwd: context.cwd,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+    expect(missing).toContain(
+      "warning: OPENROUTER_API_KEY is not visible to the Kyoso process",
+    );
+  });
+
   test("reports OpenRouter key presence without leaking its value", async () => {
     const context = await doctorFixture();
     const fakeKey = "openrouter-test-key-must-not-appear";

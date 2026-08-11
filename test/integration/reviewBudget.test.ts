@@ -127,6 +127,7 @@ describe("review execution budget", () => {
     const config: KyosoConfig = {
       ...base,
       agents: {
+        ...base.agents,
         codex: { ...base.agents.codex, enabled: false },
         claude: { ...base.agents.claude, enabled: false },
       },

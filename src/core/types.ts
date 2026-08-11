@@ -217,7 +217,9 @@ export type CisaSecureByDesignResult = {
   notes: string[];
 };
 
-export type AgentName = "codex" | "claude";
+export const AGENT_NAMES = ["codex", "claude", "qwen"] as const;
+
+export type AgentName = (typeof AGENT_NAMES)[number];
 
 export type AgentRole =
   | "implementation_reviewer"

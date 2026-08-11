@@ -18,6 +18,7 @@ const NUMBER_VALUE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 const UNSET_NUMBER_OVERRIDE_PATHS = new Set([
   "agents.codex.timeoutS",
   "agents.claude.timeoutS",
+  "agents.qwen.timeoutS",
   "agents.codex.openRouter.streamIdleTimeoutMs",
   "agents.codex.openRouter.streamIdleTimeoutS",
   "agents.codex.openRouter.streamMaxRetries",

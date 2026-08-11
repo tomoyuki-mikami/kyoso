@@ -12,7 +12,7 @@ The Japanese word 協奏 translates to concerto in English: multiple independent
   <img src="https://raw.githubusercontent.com/hokupod/kyoso/main/docs/assets/kyoso-ensemble.png" alt="A conductor coordinating a drummer, a violinist, and a pianist" width="480">
 </p>
 
-It coordinates Codex and Claude reviewers for:
+It coordinates Codex and Claude reviewers (with optional Qwen as a third reviewer) for:
 
 - implementation plan review
 - security review with CISA Secure by Design gates

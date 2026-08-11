@@ -178,12 +178,21 @@ export async function runDoctor(options: {
   const agentCommandExists = {
     codex: commandExists(loaded.config.agents.codex.command, env),
     claude: commandExists(loaded.config.agents.claude.command, env),
+    qwen: commandExists(loaded.config.agents.qwen.command, env),
   };
-  for (const agent of ["codex", "claude"] as const) {
+  const agentLabels = { codex: "Codex", claude: "Claude", qwen: "Qwen" };
+  for (const agent of ["codex", "claude", "qwen"] as const) {
     const config = loaded.config.agents[agent];
+    if (agent === "qwen" && !config.enabled) {
+      lines.push(`  ${agentLabels[agent]}: disabled`);
+      lines.push(
+        "    hint: set agents.qwen.enabled = true and agents.qwen.model (an OpenRouter model ID) to add Qwen as a third reviewer",
+      );
+      continue;
+    }
     const exists = agentCommandExists[agent];
     lines.push(
-      `  ${agent === "codex" ? "Codex" : "Claude"}: ${exists ? "ok" : "warning command not found"}`,
+      `  ${agentLabels[agent]}: ${exists ? "ok" : "warning command not found"}`,
     );
     lines.push(`    command: ${[config.command, ...config.args].join(" ")}`);
     if (
@@ -244,6 +253,38 @@ export async function runDoctor(options: {
       ) {
         lines.push(
           `    auth: detected ${OPENROUTER_API_KEY_ENV} from agents.codex.env`,
+        );
+      } else if (hasUsableEnvValue(env, OPENROUTER_API_KEY_ENV)) {
+        lines.push(`    auth: detected ${OPENROUTER_API_KEY_ENV}`);
+      } else if (
+        isUnexpandedEnvPlaceholder(configuredKey) ||
+        isUnexpandedEnvPlaceholder(env[OPENROUTER_API_KEY_ENV])
+      ) {
+        lines.push(
+          `    warning: ${OPENROUTER_API_KEY_ENV} placeholder was not expanded by the client`,
+        );
+        lines.push(
+          `    hint: expand ${OPENROUTER_API_KEY_ENV} in the MCP registration, restart the client, then run \`kyoso doctor\``,
+        );
+      } else {
+        lines.push(
+          `    warning: ${OPENROUTER_API_KEY_ENV} is not visible to the Kyoso process`,
+        );
+        lines.push(
+          `    hint: add ${OPENROUTER_API_KEY_ENV} to the MCP registration, restart the client, then run \`kyoso doctor\``,
+        );
+      }
+    } else if (agent === "qwen") {
+      lines.push(
+        `    model: ${sanitizeTextForDisplay(loaded.config.agents.qwen.model ?? "")}`,
+      );
+      const configuredKey =
+        loaded.config.agents.qwen.env[OPENROUTER_API_KEY_ENV];
+      if (
+        hasUsableEnvValue(loaded.config.agents.qwen.env, OPENROUTER_API_KEY_ENV)
+      ) {
+        lines.push(
+          `    auth: detected ${OPENROUTER_API_KEY_ENV} from agents.qwen.env`,
         );
       } else if (hasUsableEnvValue(env, OPENROUTER_API_KEY_ENV)) {
         lines.push(`    auth: detected ${OPENROUTER_API_KEY_ENV}`);

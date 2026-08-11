@@ -155,11 +155,15 @@ async function runSubprocessAgent(
     const abortController = new AbortController();
     let cancelSession: (() => void) | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const child = spawn(agentConfig.command, agentConfig.args, {
-      cwd: input.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(
+      agentConfig.command,
+      resolveLaunchArgs(agent, agentConfig),
+      {
+        cwd: input.workspaceDir,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     let termination: Promise<void> | undefined;
     const terminate = (): Promise<void> => {
       termination ??= terminateChild(child);
@@ -902,6 +906,18 @@ function readCodexThreadStatus(update: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function resolveLaunchArgs(
+  agent: AgentName,
+  agentConfig: Pick<AgentConfig, "args" | "model">,
+): string[] {
+  // Qwen receives the OpenRouter model ID through its official --model flag;
+  // Codex and Claude keep their env-based model configuration.
+  if (agent === "qwen" && agentConfig.model?.trim()) {
+    return [...agentConfig.args, "--model", agentConfig.model];
+  }
+  return agentConfig.args;
 }
 
 function resolveEffortConfigOption(

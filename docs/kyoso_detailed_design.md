@@ -457,6 +457,8 @@ ACP agents
   Claude: warning
     command: npx -y @agentclientprotocol/claude-agent-acp
     auth: set ANTHROPIC_API_KEY (API billing) or run `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN (subscription)
+  Qwen: disabled
+    hint: set agents.qwen.enabled = true and agents.qwen.model (an OpenRouter model ID) to add Qwen as a third reviewer
 
 Judge
   provider: deterministic_fallback
@@ -478,6 +480,8 @@ Audit
 Manual MCP diagnosis is non-executing by default: `doctor` classifies a present Bun runner as unverified instead of spawning it. It must not call a legacy or custom registration ready. Only `kyoso setup <client> --write --runner bunx` can perform the bounded `bunx --version` probe; its dry-run counterpart reports that verification as pending and does not spawn it. An exact legacy Bun registration with an omitted runner is preserved without probing. Otherwise doctor shows the classification and a manual repair path.
 
 When `agents.codex.provider = "openrouter"`, the Codex section also reports the selected provider, model, and reliability policy. It labels unset idle timeout, stream retries, and request retries as inherited from the Codex runtime rather than asserting version-dependent defaults. When both idle timeout and stream retries are configured, it shows their approximate idle-only window plus backoff and warns when that window can consume the configured Codex agent timeout. It reports `auth: detected OPENROUTER_API_KEY from agents.codex.env` for a non-empty explicit child value, otherwise `auth: detected OPENROUTER_API_KEY` for a non-empty Kyoso process value. An unexpanded `${OPENROUTER_API_KEY}` receives a dedicated warning; any other missing value emits a warning that names the MCP registration forwarding requirement, client restart, and `kyoso doctor` as the verification command. It never prints a credential value.
+
+The Qwen section shows `Qwen: disabled` with an enablement hint while `agents.qwen.enabled` is false. When enabled, it shows the command, the configured OpenRouter model, and the same sanitized `OPENROUTER_API_KEY` detection ladder as Codex OpenRouter mode: explicit `agents.qwen.env` value first, then the Kyoso process value, then an unexpanded-placeholder warning, and finally a missing-key warning with the MCP registration repair path. It never prints a credential value.
 
 ### 6.8 `kyoso init`
 
@@ -763,7 +767,7 @@ export type KyosoResult = {
     >;
     verification?: {
       status: "confirmed" | "refuted" | "uncertain" | "not_verified";
-      verifier?: "codex" | "claude";
+      verifier?: "codex" | "claude" | "qwen";
       note?: string;
     };
   }>;
@@ -886,7 +890,7 @@ Review CLI overrides use repeatable `--set <key>=<value>` arguments and are limi
 
 CLI overrides are applied after config files. They do not execute code or require config trust. Unknown keys are rejected, boolean and numeric keys are converted according to their existing config type, string keys stay strings, and the complete config is schema-validated after application.
 
-Time input aliases are normalized at input boundaries. Config pairs are `agents.codex.timeoutS`, `agents.claude.timeoutS`, `agents.codex.openRouter.streamIdleTimeoutS`, `judge.timeoutS`, `verification.timeoutS`, and user-global-only `reviewBudget.maxTotalWallTimeS`, each paired with its existing `*Ms` field. Every raw config layer is normalized separately before unknown-key checks, project-scope/OpenRouter authorization checks, and merge. This preserves layer precedence. Within one layer both units are validated and `S` wins, then the alias is removed so resolved `KyosoConfig` remains millisecond-only.
+Time input aliases are normalized at input boundaries. Config pairs are `agents.codex.timeoutS`, `agents.claude.timeoutS`, `agents.qwen.timeoutS`, `agents.codex.openRouter.streamIdleTimeoutS`, `judge.timeoutS`, `verification.timeoutS`, and user-global-only `reviewBudget.maxTotalWallTimeS`, each paired with its existing `*Ms` field. Every raw config layer is normalized separately before unknown-key checks, project-scope/OpenRouter authorization checks, and merge. This preserves layer precedence. Within one layer both units are validated and `S` wins, then the alias is removed so resolved `KyosoConfig` remains millisecond-only.
 
 MCP/library requests similarly normalize `options.maxAgentTimeoutS` and `options.reviewBudget.maxTotalWallTimeS` after raw validation and lower-only budget-ceiling validation, but before fingerprinting, secret scan, prompt construction, or agent launch. `progressHeartbeatS` is normalized with the same rule and alone permits zero. Seconds may be fractional only when multiplication by 1,000 produces a safe integer millisecond value. Runtime timers, `AgentRunInput`, results, progress events, and Audit remain canonical milliseconds.
 
@@ -943,6 +947,13 @@ args = ["@agentclientprotocol/codex-acp"]
 
 [agents.codex.env]
 CODEX_CONFIG = '{"model":"gpt-5.5"}'
+
+[agents.qwen]
+# Optional third reviewer. User-global-only enablement: project config cannot
+# enable Qwen or pick its model. Requires an OPENROUTER_API_KEY visible to the
+# Kyoso process (never stored).
+enabled = true
+model = "qwen/qwen3-coder"
 ```
 
 ### 10.4 Schema leaf to runtime-use contract
@@ -1162,7 +1173,7 @@ Do not forward:
 
 #### OpenRouter opt-in exception
 
-`OPENROUTER_API_KEY` is not part of the normal Codex parent-environment allowlist. Project `agents.codex.provider = "openrouter"`, a project model override while OpenRouter is inherited, or a project `agents.codex.openRouter.*` override while OpenRouter is inherited first requires its exact absolute config directory in user-global `agents.codex.allowProjectProvider`, including trusted legacy `kyoso.config.ts`; a user-global provider or direct CLI provider/model override is already explicit and needs no allowlist entry. Only when the provider is selected does Kyoso resolve a non-empty key from explicit `agents.codex.env.OPENROUTER_API_KEY` first and then from the Kyoso parent process. Only a whole unexpanded credential placeholder — `${NAME}`, `$NAME`, or `%NAME%`, with optional surrounding whitespace — is treated as absent and produces a sanitized key-name warning; values with other text are preserved. This covers known credential keys and custom names ending in `_KEY`, `_TOKEN`, `_SECRET`, or `_PASSWORD`, while non-credential templates remain unchanged. If neither value is non-empty, Kyoso does not spawn Codex and returns a structured failed agent result, so a healthy reviewer can continue in degraded mode; when the provider is omitted or `provider = "default"`, it forwards neither an explicit nor a parent OpenRouter key and warns when a non-empty explicit key was withheld. The same sanitized withholding warning applies to a non-empty explicit key in any other child configuration, including `agents.claude.env`, because only the selected Codex OpenRouter child can receive it. `provider = "default"` is a reset sentinel: when it replaces an inherited OpenRouter provider, it clears inherited retry policy and clears the inherited model unless the reset layer explicitly supplies a normal model.
+`OPENROUTER_API_KEY` is not part of the normal Codex parent-environment allowlist. Project `agents.codex.provider = "openrouter"`, a project model override while OpenRouter is inherited, or a project `agents.codex.openRouter.*` override while OpenRouter is inherited first requires its exact absolute config directory in user-global `agents.codex.allowProjectProvider`, including trusted legacy `kyoso.config.ts`; a user-global provider or direct CLI provider/model override is already explicit and needs no allowlist entry. Only when the provider is selected does Kyoso resolve a non-empty key from explicit `agents.codex.env.OPENROUTER_API_KEY` first and then from the Kyoso parent process. Only a whole unexpanded credential placeholder — `${NAME}`, `$NAME`, or `%NAME%`, with optional surrounding whitespace — is treated as absent and produces a sanitized key-name warning; values with other text are preserved. This covers known credential keys and custom names ending in `_KEY`, `_TOKEN`, `_SECRET`, or `_PASSWORD`, while non-credential templates remain unchanged. If neither value is non-empty, Kyoso does not spawn Codex and returns a structured failed agent result, so a healthy reviewer can continue in degraded mode; when the provider is omitted or `provider = "default"`, it forwards neither an explicit nor a parent OpenRouter key and warns when a non-empty explicit key was withheld. The same sanitized withholding warning applies to a non-empty explicit key in any other child configuration, including `agents.claude.env`, because only the selected Codex OpenRouter child and the Qwen child (whose OpenRouter route is always selected) can receive it. The Qwen child resolves the key with the same explicit-then-parent ladder via `agents.qwen.env.OPENROUTER_API_KEY`, requires a non-empty `agents.qwen.model`, and always pins the child `OPENAI_BASE_URL` to the fixed OpenRouter endpoint — an explicit `agents.qwen.env.OPENAI_BASE_URL` is overwritten so no configuration can redirect the key to another host; a missing key or model produces a structured preflight failure without spawning the child. `agents.qwen.enabled` and `agents.qwen.model` are user-global-only settings: project config cannot enable Qwen or select its billed model, because that would let a reviewed repository spend the user's OpenRouter credit. `provider = "default"` is a reset sentinel: when it replaces an inherited OpenRouter provider, it clears inherited retry policy and clears the inherited model unless the reset layer explicitly supplies a normal model.
 
 The selected provider forces `MODEL_PROVIDER=kyoso-openrouter` and replaces `model_providers` in object-shaped `CODEX_CONFIG` with only this fixed preset:
 
@@ -1279,6 +1290,27 @@ Claude:
   // effort: "high",
   env: {
     KYOSO_CHILD_AGENT: "1",
+  }
+}
+```
+
+Qwen (optional third reviewer, disabled by default):
+
+```ts
+{
+  enabled: false,
+  command: "npx",
+  // Pinned adapter version; bump deliberately.
+  args: ["-y", "@qwen-code/qwen-code@0.21.9", "--acp"],
+  role: "implementation_reviewer",
+  // model is required when enabled; it is an OpenRouter model ID and is
+  // appended to the launch args as `--model <id>`.
+  env: {
+    KYOSO_CHILD_AGENT: "1",
+  },
+  auth: {
+    recommendedEnv: ["OPENROUTER_API_KEY"],
+    envWhitelist: ["OPENROUTER_API_KEY"],
   }
 }
 ```
@@ -1471,6 +1503,8 @@ Before judge LLM:
 - one agent says block, another says approve
 - different recommended architecture (judge-assisted; deterministic text comparison is not authoritative)
 - conflicting severity for same issue
+
+Known limitation: disagreement extraction remains pairwise between Codex and Claude. When Qwen is enabled as a third reviewer, its findings participate in dedup, verification, and disposition, but Qwen-vs-other disagreements are not extracted as explicit disagreement entries.
 
 Disposition matrix:
 
@@ -1803,6 +1837,10 @@ Allowed env:
 Do not advertise interactive terminal auth. Kyoso is headless; Claude subscription usage must be passed through with `CLAUDE_CODE_OAUTH_TOKEN`.
 
 If both `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are set, `doctor` reports the deterministic Kyoso forwarding policy.
+
+### 19.3.1 Qwen
+
+Qwen always routes through OpenRouter and reuses the sanitized `OPENROUTER_API_KEY` handling from §13.2: explicit `agents.qwen.env.OPENROUTER_API_KEY` first, then the Kyoso process value, otherwise a structured `OPENROUTER_KEY_MISSING` failure without spawning the child. Kyoso always pins the child `OPENAI_BASE_URL` to the fixed OpenRouter endpoint (overriding any configured value, so the key cannot be redirected) and appends `--model <agents.qwen.model>` to the launch args. This matches the adapter's documented OpenRouter setup (`OPENROUTER_API_KEY` + `OPENAI_BASE_URL=https://openrouter.ai/api/v1`). Enabling Qwen without a model is a config validation error, and `agents.qwen.enabled` / `agents.qwen.model` are user-global-only (not project-overridable). Kyoso never stores or prints the key. Known supply-chain residual risk, shared with the other adapters: the pinned adapter is fetched at runtime via `npx`, so its transitive dependencies are not integrity-pinned by a Kyoso lockfile.
 
 ### 19.4 Auth errors
 
@@ -2669,7 +2707,7 @@ MVP is considered complete when all of the following pass:
 10. Both backend failures produce structured failure.
 11. Raw agent output is not written to audit by default.
 12. `KYOSO_CHILD_AGENT=1` recursion guard works.
-13. `kyoso doctor` reports Codex and Claude adapter readiness.
+13. `kyoso doctor` reports Codex, Claude, and (when enabled) Qwen adapter readiness.
 14. Unit tests cover decision policy and CISA gate.
 15. README includes honest limitations and usage examples.
 

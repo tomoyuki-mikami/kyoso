@@ -79,6 +79,13 @@ export async function createSnapshot(
     ),
     "utf8",
   );
+  if (options.agentRoles?.qwen) {
+    await writeFile(
+      join(contextDir, "instructions.qwen.md"),
+      buildAgentPrompt(tool, request, "qwen", options.agentRoles.qwen),
+      "utf8",
+    );
+  }
   if (request.repoSummary)
     await writeFile(
       join(contextDir, "repo_summary.md"),

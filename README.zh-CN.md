@@ -14,7 +14,7 @@ Kyo-so (Kyoso / 協奏) 是面向 AI coding workflows 的 MCP-native、ACP-power
   <img src="https://raw.githubusercontent.com/hokupod/kyoso/main/docs/assets/kyoso-ensemble.png" alt="指挥家协调鼓手、小提琴手和钢琴家" width="480">
 </p>
 
-它会协调 Codex 和 Claude reviewers，用于：
+它会协调 Codex 和 Claude reviewers（可选启用 Qwen 作为第三个 reviewer），用于：
 
 - implementation plan review
 - 带有 CISA Secure by Design gates 的 security review

@@ -42,6 +42,14 @@ const OPENROUTER_EXCLUDED_CREDENTIAL_ENV_KEYS = [
   "CODEX_ACCESS_TOKEN",
 ] as const;
 
+// The qwen child is an OpenAI-compatible client, so a leaked OPENAI_API_KEY
+// could take precedence over OPENROUTER_API_KEY; strip every foreign
+// provider credential before launch.
+const QWEN_EXCLUDED_CREDENTIAL_ENV_KEYS = [
+  ...OPENROUTER_EXCLUDED_CREDENTIAL_ENV_KEYS,
+  "ANTHROPIC_API_KEY",
+] as const;
+
 export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 export const KYOSO_OPENROUTER_PROVIDER_ID = "kyoso-openrouter";
 
@@ -81,7 +89,7 @@ export class ChildEnvPreflightError extends Error {
 }
 
 type ChildEnvOptions = {
-  agent?: "codex" | "claude";
+  agent?: "codex" | "claude" | "qwen";
   model?: string;
   provider?: CodexProvider;
   openRouter?: CodexOpenRouterOptions;
@@ -116,7 +124,7 @@ export function buildChildLaunchContext(
   parentEnv: NodeJS.ProcessEnv,
   whitelist: string[],
   explicit: Record<string, string>,
-  options: ChildEnvOptions & { agent: "codex" | "claude" },
+  options: ChildEnvOptions & { agent: "codex" | "claude" | "qwen" },
 ): ChildLaunchContext {
   const env = buildChildEnvironment(parentEnv, whitelist, explicit, options);
   const openRouterSelected =
@@ -124,15 +132,18 @@ export function buildChildLaunchContext(
   const requestedModel =
     options.agent === "claude"
       ? env.ANTHROPIC_MODEL
-      : readCodexRequestedModel(env.CODEX_CONFIG);
+      : options.agent === "qwen"
+        ? options.model
+        : readCodexRequestedModel(env.CODEX_CONFIG);
   return {
     env,
     executionIdentity: createModelExecutionIdentity({
-      providerRoute: openRouterSelected
-        ? "openrouter"
-        : options.agent === "codex"
-          ? "codex_default"
-          : "claude_default",
+      providerRoute:
+        openRouterSelected || options.agent === "qwen"
+          ? "openrouter"
+          : options.agent === "codex"
+            ? "codex_default"
+            : "claude_default",
       requestedModel,
     }),
   };
@@ -159,11 +170,14 @@ function buildChildEnvironment(
   };
   const openRouterSelected =
     options.agent === "codex" && options.provider === CODEX_OPENROUTER_PROVIDER;
+  // Qwen always talks to OpenRouter, so it is the only other child allowed to
+  // receive OPENROUTER_API_KEY.
+  const openRouterKeyAllowed = openRouterSelected || options.agent === "qwen";
   for (const key of MINIMAL_ENV_KEYS) {
     if (parentEnv[key]) env[key] = parentEnv[key];
   }
   for (const key of whitelist) {
-    if (key === OPENROUTER_API_KEY_ENV && !openRouterSelected) continue;
+    if (key === OPENROUTER_API_KEY_ENV && !openRouterKeyAllowed) continue;
     if (
       parentEnv[key] &&
       canCopyEnvValue(key, parentEnv[key], onCredentialPlaceholderDiscarded)
@@ -172,7 +186,7 @@ function buildChildEnvironment(
     }
   }
   for (const [key, value] of Object.entries(explicit)) {
-    if (key === OPENROUTER_API_KEY_ENV && !openRouterSelected) {
+    if (key === OPENROUTER_API_KEY_ENV && !openRouterKeyAllowed) {
       if (value.trim().length > 0) {
         (
           options.onOpenRouterCredentialWithheld ??
@@ -197,6 +211,10 @@ function buildChildEnvironment(
       options.onOpenRouterProvidersDiscarded ??
         warnOpenRouterProvidersDiscarded,
     );
+  } else if (options.agent === "qwen") {
+    applyQwenOpenRouterConfig(env, parentEnv, options.model, {
+      onCredentialPlaceholderDiscarded,
+    });
   } else {
     applyModelConfig(env, options.agent, options.model);
   }
@@ -256,9 +274,52 @@ function discardOpenRouterExcludedCredentials(env: NodeJS.ProcessEnv): void {
   }
 }
 
+function applyQwenOpenRouterConfig(
+  env: NodeJS.ProcessEnv,
+  parentEnv: NodeJS.ProcessEnv,
+  model: string | undefined,
+  callbacks: {
+    onCredentialPlaceholderDiscarded: (key: string) => void;
+  },
+): void {
+  if (!model?.trim()) {
+    throw new ChildEnvPreflightError(
+      "AGENT_CONFIG_INVALID",
+      "agents.qwen requires a non-empty agents.qwen.model (an OpenRouter model ID).",
+    );
+  }
+
+  if (!hasEnv(env, OPENROUTER_API_KEY_ENV)) {
+    const parentKey = nonEmptyEnv(parentEnv, OPENROUTER_API_KEY_ENV);
+    if (parentKey) env[OPENROUTER_API_KEY_ENV] = parentKey;
+    else if (
+      isUnexpandedCredentialEnvValue(
+        OPENROUTER_API_KEY_ENV,
+        parentEnv[OPENROUTER_API_KEY_ENV] ?? "",
+      )
+    ) {
+      callbacks.onCredentialPlaceholderDiscarded(OPENROUTER_API_KEY_ENV);
+    }
+  }
+  if (!hasEnv(env, OPENROUTER_API_KEY_ENV)) {
+    throw new ChildEnvPreflightError(
+      "OPENROUTER_KEY_MISSING",
+      "agents.qwen requires OPENROUTER_API_KEY, but it is not visible to the Kyoso process. Add OPENROUTER_API_KEY to the MCP registration, restart the client, then run `kyoso doctor`.",
+    );
+  }
+
+  // Always pin the endpoint: the qwen child receives OPENROUTER_API_KEY, so
+  // no configuration may redirect that key to another host.
+  env.OPENAI_BASE_URL = OPENROUTER_BASE_URL;
+
+  for (const key of QWEN_EXCLUDED_CREDENTIAL_ENV_KEYS) {
+    delete env[key];
+  }
+}
+
 function applyModelConfig(
   env: NodeJS.ProcessEnv,
-  agent: "codex" | "claude" | undefined,
+  agent: "codex" | "claude" | "qwen" | undefined,
   model: string | undefined,
 ): void {
   if (!model) return;

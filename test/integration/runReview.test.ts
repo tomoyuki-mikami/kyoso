@@ -33,11 +33,19 @@ const originalJudgeEnv = {
   CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
 };
 const originalAuditStateHome = process.env.XDG_STATE_HOME;
+const originalConfigHome = process.env.XDG_CONFIG_HOME;
+const originalHome = process.env.HOME;
 let auditStateHome = "";
 
 beforeAll(async () => {
   auditStateHome = await mkdtemp(join(tmpdir(), "kyoso-audit-state-"));
   process.env.XDG_STATE_HOME = auditStateHome;
+  // Isolate config resolution from the real user environment: without this,
+  // ~/.config/kyoso/config.toml (e.g. extra enabled agents) leaks into tests
+  // that omit options.env / options.config.
+  const isolatedHome = await mkdtemp(join(tmpdir(), "kyoso-test-home-"));
+  process.env.HOME = isolatedHome;
+  process.env.XDG_CONFIG_HOME = join(isolatedHome, ".config");
   delete process.env.OPENAI_API_KEY;
   delete process.env.CODEX_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
@@ -53,6 +61,8 @@ afterAll(() => {
     originalJudgeEnv.CLAUDE_CODE_OAUTH_TOKEN,
   );
   restoreEnv("XDG_STATE_HOME", originalAuditStateHome);
+  restoreEnv("XDG_CONFIG_HOME", originalConfigHome);
+  restoreEnv("HOME", originalHome);
 });
 
 describe("runReview", () => {

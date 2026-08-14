@@ -33,12 +33,14 @@
     "scripts/review-budget-report.mjs",
     ".agents/skills/kyoso-review",
     "examples",
+    "!examples/*-source-*",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "dev": "bun run src/cli/main.ts",
+    "dev:mcp": "bun run src/cli/main.ts mcp",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build": "bun build src/index.ts --target=node --outfile dist/index.js && bun build src/cli/main.ts --target=node --outfile dist/bin/kyoso.js --banner '#!/usr/bin/env node' && node -e \"require('node:fs').chmodSync('dist/bin/kyoso.js', 0o755)\" && tsc -p tsconfig.build.json",

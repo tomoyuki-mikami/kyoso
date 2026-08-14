@@ -92,8 +92,8 @@ Plugin 会安装 Kyoso review Skill 和 pin 到已发布 CLI version 的本地 s
 3. 或者，注册 MCP 并安装 review skill。
 
 ```bash
-npx -y --package=@kyo-so/cli kyoso setup claude-code --write
-bunx --package @kyo-so/cli kyoso setup claude-code --write
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup claude-code --write
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso setup claude-code --write
 ```
 
 需要手动注册 MCP 时，请使用 `examples/claude-code-mcp.json`。
@@ -101,8 +101,8 @@ bunx --package @kyo-so/cli kyoso setup claude-code --write
 4. 验证 setup。
 
 ```bash
-npx -y --package=@kyo-so/cli kyoso doctor
-bunx --package @kyo-so/cli kyoso doctor
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso doctor
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso doctor
 ```
 
 5. 从 Claude Code 请求 review。
@@ -133,15 +133,15 @@ codex plugin add kyoso@kyoso
 3. 或者，注册 MCP 并安装 review skill。
 
 ```bash
-npx -y --package=@kyo-so/cli kyoso setup codex --write
-bunx --package @kyo-so/cli kyoso setup codex --write
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write
 ```
 
 4. 验证 setup。
 
 ```bash
-npx -y --package=@kyo-so/cli kyoso doctor
-bunx --package @kyo-so/cli kyoso doctor
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso doctor
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso doctor
 ```
 
 5. 从 Codex 请求 review。
@@ -154,7 +154,9 @@ Use Kyoso diff_review on the current diff. I need a second opinion before mergin
 
 ## CLI
 
-package-runner 执行路径始终分别指定 package 和 executable：`npx -y --package=@kyo-so/cli kyoso` 与 `bunx --package @kyo-so/cli kyoso`。需要固定 workflow 时，在 package 名后加 complete SemVer pin，例如 `@kyo-so/cli@0.16.7`。下面的示例把已安装 executable 简写为 `kyoso`。Naming note: npm package 是 `@kyo-so/cli` (对应产品名 Kyo-so)，安装后的 CLI command 是更短的 `kyoso`。
+package-runner执行路径把npm package安装在本地alias `kyoso-cli`之下，并分别指定package和executable；该alias可以防止package名同为`@kyo-so/cli`的checkout遮蔽已发布的package：`npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso`与`bunx --package kyoso-cli@npm:@kyo-so/cli kyoso`。两种形式都分别选择package与executable，因此都不依赖从multi-bin package推断binary。需要固定workflow时，请给实际package加complete SemVer pin，例如`kyoso-cli@npm:@kyo-so/cli@0.16.7`。下面的示例把已安装executable简写为`kyoso`。Naming note: npm package是`@kyo-so/cli`（对应产品名Kyo-so），package-runner alias是`kyoso-cli`，安装后的CLI command是更短的`kyoso`。
+
+在引入alias之前写入的注册项仍可继续使用。从本次发布起，`kyoso doctor`会把其中大多数报告为`repair required (legacy)`，并在本机存在可执行的修复路径时直接给出修复命令，`kyoso setup <client> --write --force`会就地重写该entry，并保留已有的complete SemVer pin。自动重写的范围是Codex的config与project scope的`.mcp.json`；位于Claude Code user config (`~/.claude.json`) 的注册项会原样保留，doctor与setup都不会给出修复命令，而是要求手动更新该文件。完全匹配的legacy Bun entry在未指定runner时会保持不变。要验证Bun并继续使用Bun请加`--runner bunx --force`，要迁移到npx请加`--runner npx --force`。
 
 Bun fallback 已在 Bun `1.3.14` 上验证。旧版 Bun 请使用 npx 形式或已安装的 `kyoso`，不要依赖 Bun 从多 bin package 推断 binary。
 
@@ -217,7 +219,7 @@ kyoso security \
 # See examples/codex-config.toml
 [mcp_servers.kyoso]
 command = "npx"
-args = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]
+args = ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]
 ```
 
 client request 示例：
@@ -229,8 +231,8 @@ Use Kyoso plan_review on this plan and the selected auth files. I need a second 
 ## MCP
 
 ```bash
-npx -y --package=@kyo-so/cli kyoso mcp --network model_only
-bunx --package @kyo-so/cli kyoso mcp --network model_only
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso mcp --network model_only
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso mcp --network model_only
 ```
 
 省略 `--network` 时，Kyoso 使用 `model_only`。这意味着 Kyoso 期望 backend agents 只产生 model-provider traffic。这是 policy-level constraint，不是 OS-level network isolation。
@@ -247,19 +249,19 @@ MCP stdout 专用于 protocol messages。Logs 会写到 stderr 或 local audit t
 
 内置的 `kyoso-review` skill 有意保持范围很窄。只有当你明确请求 Kyoso、multi-agent review、plan review、security review、CISA Secure by Design review 或 diff review 时，才应触发它。
 
-Skill使用第一个可用路径，顺序是Kyoso MCP tools、PATH上已安装的`kyoso`、`npx -y --package=@kyo-so/cli kyoso`、`bunx --package @kyo-so/cli kyoso`。package runner fallback可能需要network access，且未 pin 时可能解析到更新 release，因此MCP-less正常路径应使用已安装CLI。如果 typed [review contract](#review-contract-与-finding-admission) 包含non-goals或accepted risks且MCP不可用，CLI fallback只能保留`focus`，因此Skill会停止。
+Skill使用第一个可用路径，顺序是Kyoso MCP tools、PATH上已安装的`kyoso`、`npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso`、`bunx --package kyoso-cli@npm:@kyo-so/cli kyoso`。package runner fallback可能需要network access，且未 pin 时可能解析到更新 release，因此MCP-less正常路径应使用已安装CLI。如果 typed [review contract](#review-contract-与-finding-admission) 包含non-goals或accepted risks且MCP不可用，CLI fallback只能保留`focus`，因此Skill会停止。
 
 `kyoso setup codex --write --skill-only`默认将canonical Skill directory复制到`.agents/skills/kyoso-review/`。添加`--global`后复制到`~/.agents/skills/kyoso-review/`。
 
 `kyoso setup claude-code --write --skill-only`默认复制到`.claude/skills/kyoso-review/`。添加`--global`后复制到`~/.claude/skills/kyoso-review/`。
 
-managed install会把canonical directory digest和CLI version记录到`.kyoso-install.json`。当前或已知historical copy会被adopt并自动更新；修改过或未知的copy会报告conflict并保持不变。`--force`可以替换该managed Skill。它对manual MCP的唯一例外是下文的有限迁移：绝不会重写custom或unknown注册、所选安全目标之外的global／nested注册，或Marketplace Plugin／cache。
+managed install会把canonical directory digest和CLI version记录到`.kyoso-install.json`。与当前完全一致的copy会写入marker并被adopt，已知的historical copy则会用当前文件替换；两者都不需要`--force`。修改过或未知的copy会报告conflict并保持不变。`--force`可以替换该managed Skill。它对manual MCP的唯一例外是下文的有限迁移：绝不会重写custom或unknown注册、所选安全目标之外的global／nested注册，或Marketplace Plugin／cache。
 
 ### 手动 MCP 迁移
 
-先运行 `kyoso setup codex` 或 `kyoso setup claude-code` 检查现有注册。dry-run 与 `--write` 会保留所有现有 MCP entry。`--write --force` 会把环境字段限于生成时allowlist的完全匹配 legacy npx Kyoso command迁移为上文的显式package-and-executable形式。对于完全匹配的 legacy bunx command，省略 `--runner` 会保留它且不执行probe；使用 `--write --runner bunx --force` 可验证 Bun 并迁移为显式 bunx，或使用 `--write --runner npx --force` 有意迁移为 npx。每种迁移都会保留 legacy command 中的 complete SemVer pin。对于当前的显式bunx注册，可运行`--write --runner bunx`；setup会验证Bun且不改变注册bytes。
+先运行 `kyoso setup codex` 或 `kyoso setup claude-code` 检查现有注册。dry-run 与 `--write` 会保留所有现有 MCP entry。`--write --force` 会把环境字段限于生成时allowlist的完全匹配 legacy npx Kyoso command迁移为上文使用alias的package-and-executable形式。对于完全匹配的 legacy bunx command，省略 `--runner` 会保留它且不执行probe；使用 `--write --runner bunx --force` 可验证 Bun 并迁移为使用alias的显式 bunx，或使用 `--write --runner npx --force` 有意迁移为 npx。每种迁移都会保留 legacy command 中的 complete SemVer pin。只有把alias应用于bare package名或complete SemVer pin、且environment仍限于生成时credential field的注册才会被分类为current；tag、range或格式不正确的pin在任何command形式下都会被保留为`custom`——`kyoso-cli@npm:@kyo-so/cli@latest`和`@kyo-so/cli@latest`同样如此——因为没有可供修复的确切version。若只是给仍把package写成positional的command加上alias，同样会保持`custom`。对于带alias的显式bunx注册，可运行`--write --runner bunx`，setup会验证Bun且不改变注册bytes。
 
-`--force` 只能替换 managed Skill，并按上述runner policy迁移安全且完全匹配的 legacy MCP entry。它绝不会修改`NODE_OPTIONS`等可能改变execution的env、custom `--command` entry、unknown structure、所选安全目标之外的 global / nested registration，或 Marketplace Plugin / cache。`kyoso doctor` 不会把保留的 entry 标记为 ready，而会显示为 `legacy`、`custom-unverified` 或 `unknown`；请依据 examples 手动修复后再运行 doctor。
+`--force` 只能替换 managed Skill，并按上述runner policy迁移安全且完全匹配的 legacy MCP entry。它绝不会修改`NODE_OPTIONS`等可能改变execution的env、custom `--command` entry、unknown structure、所选安全目标之外的 global / nested registration，或 Marketplace Plugin / cache。`kyoso doctor` 不会把保留的 entry 标记为 ready，而会显示为 `repair required (legacy)`、`custom/unverified` 或 `unknown`。对于 legacy entry，只要本机存在可执行的修复路径，doctor 就会打印确切的修复命令，请直接运行它；只有在它无法给出命令时（`~/.claude.json` 的注册，`custom/unverified` / `unknown`，或既无 npx 也无「已安装 CLI ＋ Bun」因而无法执行修复的 legacy entry）才依据 examples 手动修复，然后重新运行 doctor。
 
 ## Review contract 与 finding admission
 
@@ -573,7 +575,8 @@ Windows，以及无法证明所需 filesystem capability 的环境，会 fail-cl
 ## Troubleshooting
 
 - MCP timeout: client timeout应长于review-wide deadline。35分钟preset在Codex中使用2160秒，在Claude Code中使用`MCP_TOOL_TIMEOUT=2160000`。请参阅[Timeouts](#timeouts)。
-- Fresh npm release: safe-chain 等 minimum-package-age protection 可能会在 publish 后短时间内 block `npx -y --package=@kyo-so/cli@<version> kyoso`。请等待该 exact version，不要 fallback 到 `latest` 或 ambient `kyoso`。
+- Fresh npm release: safe-chain 等 minimum-package-age protection 可能会在 publish 后短时间内 block `npx -y --package=kyoso-cli@npm:@kyo-so/cli@<version> kyoso`。请等待该 exact version，不要 fallback 到 `latest` 或 ambient `kyoso`。
+- Aliased registration reported as `custom/unverified`: `0.16.7` 及更早的 `kyoso doctor` 早于 `kyoso-cli` alias，无法识别它，因此从当前示例复制的 entry 会显示为 unverified。请先更新 CLI 再重新运行 doctor。若在当前 CLI 上仍显示同一 label，则原因不同：command 把 package 写成 positional 而非 package-and-executable 形式，或带有生成 credential 之外的 environment field。
 - Deprecated TypeScript config: 除非传入 `--trust-config`，否则 untrusted `kyoso.config.ts` 会被 skip；新配置请使用 `kyoso.toml`。
 - OpenRouter key missing: 确认 Codex `model` 非空、`OPENROUTER_API_KEY` 已 forward 给 Kyoso process，并已重启 client；再运行 `kyoso doctor`。Marketplace Plugin `0.4.0` 及更高版本会将此变量名 forward 给 Kyoso process，旧版本不会。setup 也不会重写已有 MCP registration。
 

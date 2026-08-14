@@ -327,7 +327,7 @@ describe("MCP smoke harness", () => {
     await expect(
       runMcpPackageRunnerSmoke({
         command: "npx",
-        args: ["--package=@kyo-so/cli@0.13.1", "kyoso"],
+        args: ["--package=kyoso-cli@npm:@kyo-so/cli@0.13.1", "kyoso"],
         expectedVersion: version,
         sourceEnv,
         onTempRoot: (root: string) => {
@@ -471,7 +471,7 @@ describe("MCP smoke harness", () => {
       const result = await runMcpPackageRunnerSmoke({
         runner: "npx",
         command: "npx",
-        args: ["--package=@kyo-so/cli@0.13.1", "kyoso", "mcp"],
+        args: ["--package=kyoso-cli@npm:@kyo-so/cli@0.13.1", "kyoso", "mcp"],
         expectedVersion: version,
         sourceEnv: env,
         requireSafeChainInCi: true,

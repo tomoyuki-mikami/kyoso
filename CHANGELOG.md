@@ -7,10 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add maintainer-only source MCP templates `examples/codex-source-config.toml`
+  and `examples/claude-code-source-mcp.json`. They register the distinct server
+  name `kyoso-source` so the current checkout can be reviewed without shadowing
+  the installed Plugin or a published-CLI registration. Both are excluded from
+  the npm package.
+- Document maintainer runtime selection in `AGENTS.md` and in
+  `docs/kyoso_detailed_design.md` §23.3. `plugin:verify` now fails when a
+  project-local MCP registration — `.codex/config.toml` or `.mcp.json` — is
+  tracked again, and `.gitignore` keeps the untracked maintainer copies out of
+  `git add`. `.gitignore` also covers the two paths `kyoso setup` writes
+  without `--global`: the `.kyoso-install.json` marker it puts in this
+  repository's canonical Skill, and the project-local `.claude/skills/` copy.
+  `.claude/worktrees/` is ignored separately, as agent scratch space.
+- Add the maintainer-only `dev:mcp` script, which runs the MCP server from the
+  current source.
+- Harden `pack:verify` against two ways maintainer-local state could reach the
+  npm package. It now rejects a `.kyoso-install.json` Skill install marker in
+  the tarball, which `kyoso setup` writes into this repository's canonical Skill
+  when run without `--global`. `.gitignore` keeps an untracked marker out of
+  `git add`, but `npm pack` does not consult it while a `files` allowlist is in
+  place, so `pack:verify` is the only publish-stage gate, tracked or not.
+  `pack:verify` also checks the two halves of the maintainer-only example
+  exclusion separately — the packed manifest must still declare the `files`
+  negation glob, and the verifier's own pattern must still match a real entry
+  under `examples/` — so a rename or typo cannot leave the check passing
+  without checking anything.
+
 ### Changed
 
-- Promote the Marketplace Plugin to `0.7.15` and pin its Codex and Claude Code
-  MCP definitions and Skill fallbacks to `@kyo-so/cli@0.16.7`.
+- Select the CLI package through the npm alias `kyoso-cli@npm:@kyo-so/cli` in
+  every package-runner path: generated `kyoso setup` registrations, Marketplace
+  Plugin MCP definitions, Skill CLI fallbacks, manual-registration examples,
+  and documentation. Without the alias, a package runner invoked from a
+  checkout whose own package name is `@kyo-so/cli` can resolve that workspace
+  instead of the published package. Existing unaliased registrations keep
+  working; `kyoso doctor` reports most of them as `repair required (legacy)`
+  and `kyoso setup <client> --write --force` rewrites the Codex config and a
+  project-scoped `.mcp.json`. Two cases are kept rather than rewritten. A
+  Claude Code registration in a user config (`~/.claude.json`) is outside that
+  safe target, so doctor and setup ask you to update it by hand instead of
+  offering a repair command. An exact legacy Bun entry is kept when no runner
+  is named, and a runner-explicit repair does migrate it:
+  `--runner bunx --force` verifies Bun and stays on it, and
+  `--runner npx --force` moves it to npx. Setup lists both; doctor offers the
+  one matching the registration's own runner. The reverse also holds
+  during the upgrade window: an aliased registration written by hand from the
+  updated examples is reported as `custom/unverified` by a `0.16.7` doctor,
+  which predates the alias. Upgrade the CLI before rerunning doctor.
+- Promote the Marketplace Plugin to `0.7.16` and pin its Codex and Claude Code
+  MCP definitions and Skill fallbacks to `kyoso-cli@npm:@kyo-so/cli@0.16.7`.
+  This supersedes `0.7.15`, which pinned the same CLI version without the
+  alias. `0.7.15` carries no release tag, but the marketplace entry points
+  resolve this repository's default branch, so anyone who installed or updated
+  the Plugin after that commit already has the unaliased pin; run
+  `/plugin update kyoso` (or the Codex equivalent) to pick up `0.7.16`.
+- Report which legacy shape a manual MCP registration has. `kyoso doctor` and
+  `kyoso setup` now state whether the argv relies on executable inference or
+  omits the alias, rather than calling both "a legacy invocation".
+- Offer a Bun registration its own runner when repairing it. `kyoso doctor`
+  previously proposed `--runner npx --force` whenever npx was available, which
+  moved a working Bun registration to npx without saying so. It now prefers
+  `--runner bunx --force` for a Bun registration when an installed Kyoso CLI
+  and `bunx` are both present, and names the runner change whenever the repair
+  it offers lands on a different runner than the registration already uses.
+- Extract the Plugin CLI pin from the aliased argv in
+  `.github/workflows/release.yml`, matching the alias adopted above.
+
+### Removed
+
+- Remove the tracked `.codex/config.toml`. Its project-local
+  `mcp_servers.kyoso` entry silently took precedence over the installed Plugin
+  and over a maintainer's own MCP registration, so every dogfooding review ran
+  an unintended runtime. That entry also resolved the CLI through `@latest`
+  rather than an exact pin and passed
+  `--safe-chain-skip-minimum-package-age`, waiving the minimum-package-age
+  check. Forwarding the generated credential set is normal for a Kyoso MCP
+  entry; what this project's own documentation tells users to avoid is handing
+  that set to an unpinned, age-check-waived resolution.
+
+### Fixed
+
+- Correct the stale `tool_timeout_sec` in the `docs/kyoso_detailed_design.md`
+  §23.1 Codex examples from `360` to the `2160` that `kyoso setup codex`
+  actually generates. `examples/codex-config.toml` and the README
+  troubleshooting section already used `2160`.
+- Re-sync the Skill excerpt quoted in `docs/kyoso_detailed_design.md` §22.2
+  with `.agents/skills/kyoso-review/SKILL.md`, which had gained a note that the
+  Bun fallback needs a Bun version supporting `bunx --package`. Nothing
+  compares that excerpt against the Skill, so the two can drift again.
+- Mark the `package.json` sketch in `docs/kyoso_detailed_design.md` §24 as
+  dating from the MVP. Its `version` and `files` had both moved on, and `files`
+  now carries the maintainer-only example exclusion this release adds.
+
+### Known issues
+
+- The Marketplace Plugin manifest and the mirrored Skill both declare the
+  `kyoso` MCP registration, so Codex can emit a
+  `missing command for stdio dependency` warning when the Skill loads. Removing
+  the duplicate is a Plugin public-contract change and is deferred out of this
+  work; `docs/kyoso_detailed_design.md` §22.3 carries the details.
 
 ## [0.16.7] - 2026-08-11
 

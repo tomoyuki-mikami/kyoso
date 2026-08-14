@@ -290,14 +290,21 @@ function legacyManualMcpRepairWarning(
         ? "claude-code"
         : undefined;
   if (!client) {
-    return `Manual MCP registration at ${registration.path} uses legacy package-runner arguments. Its ${registration.scope} scope is not automatically migrated; update it manually.`;
+    return `Manual MCP registration at ${registration.path} uses legacy package-runner arguments: ${registration.invocation.reason} Its ${registration.scope} scope is not automatically migrated; update it manually.`;
   }
+  // Repairing through npx rewrites `command` as well as the arguments, so a Bun
+  // registration repaired that way silently stops using Bun. Offer its own
+  // runner first, and name the switch whenever the only available path changes
+  // it.
+  const bunxRepair =
+    cli.kyoso.kind === "installed" && cli.bunx === "present-unverified"
+      ? "bunx"
+      : undefined;
+  const npxRepair = cli.npx === "available" ? "npx" : undefined;
   const runner =
-    cli.npx === "available"
-      ? "npx"
-      : cli.kyoso.kind === "installed" && cli.bunx === "present-unverified"
-        ? "bunx"
-        : undefined;
+    registration.invocation.runner === "bunx"
+      ? (bunxRepair ?? npxRepair)
+      : (npxRepair ?? bunxRepair);
   const command = runner
     ? manualMcpSetupCommand(registration, cli, [
         "--write",
@@ -307,9 +314,13 @@ function legacyManualMcpRepairWarning(
       ])
     : undefined;
   if (!command) {
-    return `Manual MCP registration at ${registration.path} uses legacy package-runner arguments, but no executable Kyoso repair path is available. Update it manually.`;
+    return `Manual MCP registration at ${registration.path} uses legacy package-runner arguments: ${registration.invocation.reason} No executable Kyoso repair path is available, so update it manually.`;
   }
-  return `Manual MCP registration uses legacy package-runner arguments. Run \`${command}\` to migrate this exact registration.`;
+  const runnerChange =
+    registration.invocation.runner && registration.invocation.runner !== runner
+      ? ` It also moves the registration from ${registration.invocation.runner} to ${runner}.`
+      : "";
+  return `Manual MCP registration uses legacy package-runner arguments: ${registration.invocation.reason} Run \`${command}\` to migrate this exact registration.${runnerChange}`;
 }
 
 function manualMcpSetupCommand(

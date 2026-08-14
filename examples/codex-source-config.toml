@@ -1,0 +1,25 @@
+# Maintainer-only source MCP. Copy this entry explicitly when reviewing Kyoso
+# with the current checkout. The distinct server name prevents it from being
+# confused with the installed Plugin or a published-CLI MCP registration.
+#
+# Register it project-locally in this checkout only. `bun run dev:mcp` resolves
+# against the launching working directory, so a global registration would run
+# whichever repository the client happens to start it from — and hand it every
+# credential listed in `env_vars` below. The entry carries no
+# `--trust-config`: that flag approves executing a legacy `kyoso.config.ts`, and
+# a maintainer entry must never grant that to an arbitrary directory.
+#
+# The timeouts match `examples/codex-config.toml`. Within the forwarded
+# credential set, the single deliberate divergence is the unconditional
+# `OPENROUTER_API_KEY`, which `kyoso setup` adds to a registration it
+# generates only under `--with-openrouter`; delete that entry if you do not
+# use OpenRouter.
+#
+# This file is maintainer tooling and is excluded from the npm package.
+[mcp_servers.kyoso-source]
+command = "bun"
+args = ["run", "dev:mcp"]
+env_vars = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "CODEX_ACCESS_TOKEN", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+startup_timeout_sec = 20
+tool_timeout_sec = 2160
+enabled = true

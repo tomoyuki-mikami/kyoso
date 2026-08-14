@@ -65,7 +65,10 @@ const promotionStepExecutionModifierKeys = [
   ...promotionJobExecutionModifierKeys,
   "shell",
 ];
-const pluginMcpPackageArgumentPrefix = "--package=";
+export const pluginMcpPackageArgumentPrefix = "--package=";
+// npm alias so a checkout whose own package name is `@kyo-so/cli` cannot shadow
+// the published package when a package runner resolves the specifier.
+export const pluginMcpPackageAliasPrefix = "kyoso-cli@npm:";
 const pluginMcpDependencyBlock = [
   "dependencies:",
   "  tools:",
@@ -162,17 +165,18 @@ export function buildPluginMcpArgs(cliPackagePin) {
   }
   return [
     "-y",
-    `${pluginMcpPackageArgumentPrefix}${cliPackagePin}`,
+    `${pluginMcpPackageArgumentPrefix}${pluginMcpPackageAliasPrefix}${cliPackagePin}`,
     pluginMcpServerName,
     "mcp",
   ];
 }
 
 function buildSkillCliFallback(runner, packageSpecifier) {
+  const aliasedPackageSpecifier = `${pluginMcpPackageAliasPrefix}${packageSpecifier}`;
   if (runner === "npx") {
-    return `\`npx -y --package=${packageSpecifier} kyoso\``;
+    return `\`npx -y --package=${aliasedPackageSpecifier} kyoso\``;
   }
-  return `\`bunx --package ${packageSpecifier} kyoso\``;
+  return `\`bunx --package ${aliasedPackageSpecifier} kyoso\``;
 }
 
 /**
@@ -235,6 +239,44 @@ export function transformCanonicalToPlugin(
   );
 }
 
+// Both clients read a project-local MCP registration, and a project-local
+// `kyoso` server takes precedence over the installed Plugin and over the
+// maintainer's own published-CLI registration, so a tracked one would silently
+// redirect every maintainer's review. Untracked copies are expected — AGENTS.md
+// tells maintainers to put the source template there — so this checks the index
+// rather than the filesystem.
+export const projectLocalMcpPaths = [".codex/config.toml", ".mcp.json"];
+
+// A signal-terminated child reports a null status, so name the signal instead of
+// printing `git exited null`.
+function describeExit(result) {
+  return result.signal
+    ? `git was terminated by ${result.signal}`
+    : `git exited ${result.status}`;
+}
+
+function trackedProjectLocalMcpFailures(root) {
+  const result = spawnSync("git", ["ls-files", "--", ...projectLocalMcpPaths], {
+    cwd: root,
+    encoding: "utf8",
+    // A hung git would otherwise hang the whole verifier. The timeout path lands
+    // in the fail-closed branch below like any other non-zero exit.
+    timeout: 10_000,
+  });
+  if (result.error || result.status !== 0) {
+    // A signal-terminated child leaves `stderr` an empty string, so fall back on
+    // truthiness: `??` would stop there and report no reason at all.
+    const reason =
+      result.error?.message || result.stderr?.trim() || describeExit(result);
+    return [`Tracked project-local MCP check failed: ${reason}`];
+  }
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((path) => `Repository must not track ${path}`);
+}
+
 /**
  * Check every tracked Plugin artifact without modifying the worktree.
  * `verifyPackageArchive` runs `npm pack --dry-run --ignore-scripts` so the
@@ -246,12 +288,17 @@ export function verifyPluginDistribution(options = {}) {
   const verifyPromotionWorkflow =
     options.verifyPromotionWorkflow ?? root === repositoryRoot;
   const expectedPackageVersion = options.expectedPackageVersion;
+  const verifyTrackedProjectLocalMcp =
+    options.verifyTrackedProjectLocalMcp ?? root === repositoryRoot;
   const paths = distributionPaths(root);
   const failures = [];
   // Claude Code auto-detects a plugin-root .mcp.json before the inline
   // mcpServers declaration in the Claude plugin manifest.
   if (existsSync(join(paths.pluginRoot, ".mcp.json"))) {
     failures.push("Plugin root must not contain .mcp.json");
+  }
+  if (verifyTrackedProjectLocalMcp) {
+    failures.push(...trackedProjectLocalMcpFailures(root));
   }
   const catalog = readJson(paths.catalog, "Marketplace catalog", failures);
   const manifest = readJson(paths.manifest, "Plugin manifest", failures);
@@ -1445,33 +1492,31 @@ function findPromotionWorkflowCommand(steps, command, description, failures) {
 }
 
 function validatePluginMcpInvocation(server, label, failures) {
+  // Composed from the same two constants the parser below reads, so renaming
+  // the alias cannot leave this message describing a shape nothing accepts.
+  const expectedShape = `["-y", "${pluginMcpPackageArgumentPrefix}${pluginMcpPackageAliasPrefix}@kyo-so/cli@VERSION", "kyoso", "mcp"]`;
   if (server.command !== "npx") {
     failures.push(`${label} command must be "npx"`);
   }
   if (!Array.isArray(server.args)) {
-    failures.push(
-      `${label} args must be ["-y", "--package=@kyo-so/cli@VERSION", "kyoso", "mcp"]`,
-    );
+    failures.push(`${label} args must be ${expectedShape}`);
     return { packageName: "", packageVersion: "" };
   }
-  const pin = parsePluginMcpPackagePin(server.args);
-  if (!pin) {
+  const parsed = parsePluginMcpPackagePin(server.args);
+  if (!parsed.pin) {
     failures.push(
-      `${label} package pin must be an exact @kyo-so/cli SemVer; args[1] was ${formatValue(server.args[1])}`,
+      `${label} package pin ${parsed.reason}; args[1] was ${formatValue(server.args[1])}`,
     );
-    failures.push(
-      `${label} args must be ["-y", "--package=@kyo-so/cli@VERSION", "kyoso", "mcp"]`,
-    );
+    failures.push(`${label} args must be ${expectedShape}`);
     return { packageName: "", packageVersion: "" };
   }
+  const pin = parsed.pin;
   const expectedArgs = buildPluginMcpArgs(packagePin(pin));
   if (!isDeepStrictEqual(server.args, expectedArgs)) {
     failures.push(
       `${label} args must exactly equal ${formatValue(expectedArgs)}; received ${formatValue(server.args)}`,
     );
-    failures.push(
-      `${label} args must be ["-y", "--package=@kyo-so/cli@VERSION", "kyoso", "mcp"]`,
-    );
+    failures.push(`${label} args must be ${expectedShape}`);
   }
   return pin;
 }
@@ -1878,17 +1923,24 @@ function supportsSecondsAliases(packageVersion) {
   return true;
 }
 
+// I4 (alias form) and I3 (exact SemVer) are violated for different reasons and
+// are repaired differently, so the parse reports which invariant failed instead
+// of collapsing both into one message.
 function parsePluginMcpPackagePin(args) {
   const packageArgument = args?.[1];
+  const aliasedPrefix = `${pluginMcpPackageArgumentPrefix}${pluginMcpPackageAliasPrefix}`;
   if (
     !isNonEmptyString(packageArgument) ||
-    !packageArgument.startsWith(pluginMcpPackageArgumentPrefix)
+    !packageArgument.startsWith(aliasedPrefix)
   ) {
-    return undefined;
+    return {
+      reason: `must carry the ${pluginMcpPackageAliasPrefix} npm alias (invariant I4)`,
+    };
   }
-  return parsePackagePin(
-    packageArgument.slice(pluginMcpPackageArgumentPrefix.length),
-  );
+  const pin = parsePackagePin(packageArgument.slice(aliasedPrefix.length));
+  return pin
+    ? { pin }
+    : { reason: "must pin an exact @kyo-so/cli SemVer (invariant I3)" };
 }
 
 function readPluginPackagePin(path) {
@@ -1900,13 +1952,11 @@ function readPluginPackagePin(path) {
       `Plugin MCP config could not be read: ${errorMessage(error)}`,
     );
   }
-  const pin = parsePluginMcpPackagePin(mcp?.[pluginMcpServerName]?.args);
-  if (!pin) {
-    throw new Error(
-      "Plugin MCP package pin must be an exact @kyo-so/cli SemVer",
-    );
+  const parsed = parsePluginMcpPackagePin(mcp?.[pluginMcpServerName]?.args);
+  if (!parsed.pin) {
+    throw new Error(`Plugin MCP package pin ${parsed.reason}`);
   }
-  return packagePin(pin);
+  return packagePin(parsed.pin);
 }
 
 function packagePin(pin) {

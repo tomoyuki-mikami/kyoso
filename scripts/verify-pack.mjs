@@ -19,6 +19,11 @@ import {
   createKyosoPathSentinel,
   runMcpPackageRunnerSmoke,
 } from "./mcp-smoke.mjs";
+import {
+  maintainerOnlyExampleGlob,
+  maintainerOnlyExamplePattern,
+  packageEntryFailures,
+} from "./pack-exclusions.mjs";
 
 const requiredPrefixes = ["dist/", ".agents/skills/kyoso-review/", "examples/"];
 const requiredFiles = [
@@ -26,18 +31,6 @@ const requiredFiles = [
   "LICENSE",
   "package.json",
   "scripts/review-budget-report.mjs",
-];
-const forbiddenPrefixes = [
-  "src/",
-  "ai/",
-  ".kyoso/",
-  ".claude/",
-  "node_modules/",
-  "test/",
-  ".github/",
-  "plugins/",
-  ".agents/plugins/",
-  ".claude-plugin/",
 ];
 const secretPatterns = [
   /sk-[A-Za-z0-9_-]{20,}/,
@@ -133,10 +126,24 @@ try {
     );
   }
 
-  for (const prefix of forbiddenPrefixes) {
-    if (filePaths.some((path) => path.startsWith(prefix))) {
-      failures.push(`forbidden package prefix included: ${prefix}`);
-    }
+  failures.push(...packageEntryFailures(filePaths));
+
+  // The maintainer-only example exclusion is only as good as its two halves
+  // staying in sync: this one, and the `files` negation glob checked further
+  // down. Neither proves the two describe the same set; together they turn the
+  // realistic failure — a rename or a typo making the guard vacuously true —
+  // into a visible failure instead of a silent publish. So fail closed here: an
+  // empty match means the templates were renamed or the pattern was mistyped. A
+  // missing or unreadable `examples/` lands here as well, so it is reported
+  // alongside the other failures instead of aborting the run with a stack trace.
+  if (
+    !exampleEntryNames().some((name) =>
+      maintainerOnlyExamplePattern.test(`examples/${name}`),
+    )
+  ) {
+    failures.push(
+      "maintainer-only example pattern matched no file under examples/",
+    );
   }
 
   const tarEntries = listTarEntries(tarballPath);
@@ -172,6 +179,15 @@ try {
     Object.keys(packedManifest.bin).length < 2
   ) {
     failures.push("package manifest must retain at least two bin entries.");
+  }
+  // The other half of the maintainer-only exclusion checked above. Read it from
+  // the tarball rather than the working tree: every other assertion here
+  // describes the artifact, and the negation glob is what will govern the next
+  // `npm pack` a consumer's registry copy came from.
+  if (!packedManifest.files?.includes(maintainerOnlyExampleGlob)) {
+    failures.push(
+      `package.json files must exclude maintainer-only examples with "${maintainerOnlyExampleGlob}"`,
+    );
   }
 
   for (const entry of tarEntries) {
@@ -227,6 +243,20 @@ try {
   console.log(`pack verify ok: ${archives[0]} (${filePaths.length} files)`);
 } finally {
   rmSync(tempDir, { force: true, recursive: true });
+}
+
+// The exclusion glob's target set lives in the working tree, not the tarball —
+// the whole point is to name files the tarball must not have. A missing or
+// unreadable directory reads as an empty set so the caller reports it as a
+// failure instead of throwing. The path is relative to the repository root,
+// which is the only place `pack:verify` runs from: the `package.json` script
+// and the release workflow are its callers.
+function exampleEntryNames() {
+  try {
+    return readdirSync("examples");
+  } catch {
+    return [];
+  }
 }
 
 // Parse `tar -tvf` lines (mode is the first column, the entry name the last

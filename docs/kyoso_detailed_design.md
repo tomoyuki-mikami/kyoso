@@ -139,11 +139,11 @@ MVP backend agents:
 Kyoso is implemented in TypeScript and runs primarily on Bun. Distribution must support both:
 
 ```bash
-bunx --package @kyo-so/cli kyoso mcp
-npx -y --package=@kyo-so/cli kyoso mcp
+bunx --package kyoso-cli@npm:@kyo-so/cli kyoso mcp
+npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso mcp
 ```
 
-Both commands select the `@kyo-so/cli` package and its `kyoso` executable explicitly; neither relies on package-manager binary inference from a multi-bin package. Bun `1.3.14` is the verified Bun baseline for `bunx --package <pkg> <binary>`. Older Bun users must use the npx form or an installed `kyoso` executable.
+Both commands install `@kyo-so/cli` under the npm alias `kyoso-cli` and select its `kyoso` executable explicitly; neither relies on package-manager binary inference from a multi-bin package, and neither can resolve a same-named workspace instead of the published package. Bun `1.3.14` remains the documented baseline for `bunx --package <pkg> <binary>` because that is the version the two-argument form was verified on; the alias raised no newer requirement in the runtimes measured, having been verified to resolve on Bun `1.3.7` and on the npm `npx` bundled with Node `24.14.1`; that it holds across the whole supported range is an assumption, not a measurement. Older Bun users must use the npx form or an installed `kyoso` executable.
 
 ### 3.4 CISA Secure by Design
 
@@ -418,13 +418,13 @@ kyoso setup claude-code --skill-only [--write] [--global] [--force]
 
 Dry-run is the default. `--skill-only` requires an explicit client, never reads or writes MCP configuration, and rejects `--runner`, `--command`, or `--with-openrouter`. Codex MCP state resolves from `CODEX_HOME/config.toml`, falling back to `HOME/.codex/config.toml`; global Codex Skills always resolve from `HOME/.agents/skills`.
 
-For a newly written manual MCP entry, Codex intentionally forwards `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_HOME`, `CODEX_ACCESS_TOKEN`, `ANTHROPIC_API_KEY`, and `CLAUDE_CODE_OAUTH_TOKEN` in that order; `CODEX_ACCESS_TOKEN` supports the default Codex authentication flow. `--with-openrouter` inserts `OPENROUTER_API_KEY` after `CODEX_ACCESS_TOKEN`, and adds `OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"` to a new Claude Code MCP environment. OpenRouter mode later withholds `CODEX_ACCESS_TOKEN` from the Codex child. New npx entries use `-y --package=@kyo-so/cli kyoso mcp`; Bun entries use `--package @kyo-so/cli kyoso mcp`.
+For a newly written manual MCP entry, Codex intentionally forwards `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_HOME`, `CODEX_ACCESS_TOKEN`, `ANTHROPIC_API_KEY`, and `CLAUDE_CODE_OAUTH_TOKEN` in that order; `CODEX_ACCESS_TOKEN` supports the default Codex authentication flow. `--with-openrouter` inserts `OPENROUTER_API_KEY` after `CODEX_ACCESS_TOKEN`, and adds `OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"` to a new Claude Code MCP environment. OpenRouter mode later withholds `CODEX_ACCESS_TOKEN` from the Codex child. New npx entries use `-y --package=kyoso-cli@npm:@kyo-so/cli kyoso mcp`; Bun entries use `--package kyoso-cli@npm:@kyo-so/cli kyoso mcp`. The alias prevents a checkout named `@kyo-so/cli` from shadowing the published package.
 
 Manual MCP registrations omit `OPENROUTER_API_KEY` unless `--with-openrouter` is explicitly set for a new registration. The Claude Code placeholder must be expanded by the client; Kyoso treats a credential value consisting solely of an unexpanded placeholder as unavailable and writes a sanitized warning with the variable name only.
 
-Setup classifies existing manual MCP entries as `current`, `legacy`, `custom`, or `unknown`. Dry-run and `--write` preserve all existing entries. `--write --force` may migrate an exact recognized legacy npx Kyoso argv with a generated-safe environment to the explicit package-and-executable form, preserving a complete SemVer pin when present. An exact legacy bunx argv remains unchanged without an explicit runner and never triggers a probe; `--write --runner bunx --force` performs the bounded Bun verification before migrating it to explicit bunx, while `--write --runner npx --force` intentionally migrates it to npx. A current explicit bunx entry is preserved but can be capability-checked by `--write --runner bunx`. Execution-altering environments such as `NODE_OPTIONS`, custom commands, unknown structures, quoted/multiline Codex tables, global/nested entries outside the selected safe target, and Plugin caches are never rewritten. Doctor reports preserved non-current entries as `legacy`, `custom-unverified`, or `unknown` rather than ready, with an executable runner-explicit repair command when one is available.
+Setup classifies existing manual MCP entries as `current`, `legacy`, `custom`, or `unknown`. `current` is the explicit package-and-executable argv whose package specifier applies the `kyoso-cli@npm:@kyo-so/cli` alias to either the bare package name or a complete SemVer pin, and whose environment stays inside the generated credential allowlist: an environment outside that allowlist makes the entry `custom` whatever the argv looks like, because the environment check overrides the argv classification rather than qualifying it. The alias alone is not enough, and the same bar applies without it: a tag, range, or malformed pin is `custom` in every argv shape. Nothing repairs to an inexact version, so such a spec leaves a repair command with no migration target to name. Two unaliased shapes are `legacy` once they clear that same pin bar, and each states its own reason: a positional argv relies on executable inference with a multi-bin package, and an explicit argv can resolve a same-named workspace instead of the published package. A positional argv that does carry the alias is `custom`, not `legacy`, whatever its spec, because only the explicit parser strips the alias before reading the spec. No registration written before the alias can carry it, so that asymmetry never applies to one; what does change for those registrations is that an unaliased explicit argv counted as `current` before the alias and is `legacy` now, which is the migration §6.7 describes. Both migrate to the same replacement, so a registration written before the alias keeps working until it is repaired. Dry-run and `--write` preserve all existing entries. `--write --force` may migrate an exact recognized legacy npx Kyoso argv with a generated-safe environment to the current form, preserving a complete SemVer pin when present. An exact legacy bunx argv remains unchanged without an explicit runner and never triggers a probe; `--write --runner bunx --force` performs the bounded Bun verification before migrating it to aliased bunx, while `--write --runner npx --force` intentionally migrates it to npx. A current aliased bunx entry is preserved but can be capability-checked by `--write --runner bunx`. Execution-altering environments such as `NODE_OPTIONS`, custom commands, unknown structures, quoted/multiline Codex tables, global/nested entries outside the selected safe target, and Plugin caches are never rewritten. The safe target is the Codex config and a project-scoped `.mcp.json`; a Claude Code registration in the user config `~/.claude.json` is outside it, so setup preserves that entry and asks for a hand edit instead of offering a repair command. Doctor reports preserved non-current entries as `repair required (legacy)`, `custom/unverified`, or `unknown` rather than ready, with an executable runner-explicit repair command when one is available.
 
-The installer hashes all regular files in the canonical directory except `.kyoso-install.json`, records the digest and CLI version in that marker, adopts exact current or known historical copies, and updates only marker-matching managed copies. Unknown or user-modified copies return a conflict without being overwritten. `--force` replaces a managed Skill and may perform the limited legacy MCP migration above; it never broadens that scope. Replacement rejects symlink path segments, stages within the destination parent, verifies the staged digest, and uses backup/rename rollback so a failed update does not remove the installed Skill. The fixed sibling `.kyoso-review.backup` is paired with `.kyoso-review.install-transaction.json`: when the destination is missing, the next write run validates the transaction, restores that backup, and stops before applying another update; when both paths exist, setup fails closed and preserves both for manual inspection. An unmarked fixed-name backup is never adopted automatically.
+The installer hashes all regular files in the canonical directory except `.kyoso-install.json`, records the digest and CLI version in that marker, adopts an exact current copy by writing that marker, replaces a known historical copy with the current files, and otherwise updates only marker-matching managed copies. Unknown or user-modified copies return a conflict without being overwritten. `--force` replaces a managed Skill and may perform the limited legacy MCP migration above; it never broadens that scope. Replacement rejects symlink path segments, stages within the destination parent, verifies the staged digest, and uses backup/rename rollback so a failed update does not remove the installed Skill. The fixed sibling `.kyoso-review.backup` is paired with `.kyoso-review.install-transaction.json`: when the destination is missing, the next write run validates the transaction, restores that backup, and stops before applying another update; when both paths exist, setup fails closed and preserves both for manual inspection. An unmarked fixed-name backup is never adopted automatically.
 
 Skill installation has a single-user local-CLI threat boundary. It records the destination parent's real path and filesystem identity and rechecks both immediately before and after each rename. Node's path-based filesystem API cannot make that check and rename one fd-relative operation, so install roots writable by mutually untrusted users are unsupported; a future shared or multi-tenant mode must use `openat`/`renameat`-style no-follow operations.
 
@@ -475,7 +475,7 @@ Audit
 
 `doctor` must be best effort and must not read raw credential values.
 
-Manual MCP diagnosis is non-executing by default: `doctor` classifies a present Bun runner as unverified instead of spawning it. It must not call a legacy or custom registration ready. Only `kyoso setup <client> --write --runner bunx` can perform the bounded `bunx --version` probe; its dry-run counterpart reports that verification as pending and does not spawn it. An exact legacy Bun registration with an omitted runner is preserved without probing. Otherwise doctor shows the classification and a manual repair path.
+Manual MCP diagnosis is non-executing by default: `doctor` classifies a present Bun runner as unverified instead of spawning it. It must not call a legacy or custom registration ready. Only `kyoso setup <client> --write --runner bunx` can perform the bounded `bunx --version` probe; its dry-run counterpart reports that verification as pending and does not spawn it. An exact legacy Bun registration with an omitted runner is preserved without probing; this includes an unaliased explicit Bun argv. Otherwise doctor shows the classification and a manual repair path. An unaliased explicit registration whose spec clears the pin bar of §6.6 is reported as legacy with the alias reason, not as ready, and carries a runner-explicit repair command when one is available. That repair command keeps the registration's own runner where it can: a Bun registration is offered `--runner bunx --force` whenever an installed Kyoso CLI and a present Bun runner make that path executable, and only when the sole available path changes the runner does the warning also say which runner it moves to.
 
 When `agents.codex.provider = "openrouter"`, the Codex section also reports the selected provider, model, and reliability policy. It labels unset idle timeout, stream retries, and request retries as inherited from the Codex runtime rather than asserting version-dependent defaults. When both idle timeout and stream retries are configured, it shows their approximate idle-only window plus backoff and warns when that window can consume the configured Codex agent timeout. It reports `auth: detected OPENROUTER_API_KEY from agents.codex.env` for a non-empty explicit child value, otherwise `auth: detected OPENROUTER_API_KEY` for a non-empty Kyoso process value. An unexpanded `${OPENROUTER_API_KEY}` receives a dedicated warning; any other missing value emits a warning that names the MCP registration forwarding requirement, client restart, and `kyoso doctor` as the verification command. It never prints a credential value.
 
@@ -2215,8 +2215,9 @@ Do not use this skill for every coding task. It is intended for deliberate revie
    - If the typed contract contains non-goals or accepted risks and MCP is unavailable, stop and explain that the CLI fallback cannot preserve those trusted fields. A focus-only contract may use the CLI fallback.
    - If the MCP tools are unavailable, use the first available CLI path with JSON output:
      1. An installed `kyoso` executable on `PATH`.
-     2. `npx -y --package=@kyo-so/cli kyoso`.
-     3. `bunx --package @kyo-so/cli kyoso`.
+     2. `npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso`.
+     3. `bunx --package kyoso-cli@npm:@kyo-so/cli kyoso`.
+     - The Bun fallback requires a Bun version that supports `bunx --package`; if it does not, return to the npx or PATH fallback.
    - Append the review command to the selected CLI path:
      - `plan_review` -> `plan --goal <text> [--plan <path-or-text>] [--file <path>] --json`
      - `security_review` -> `security --goal <text> [--diff <path>] [--file <path>] --json`
@@ -2269,7 +2270,9 @@ dependencies:
       transport: "stdio"
 ```
 
-The dependency `value` must match the server name in the Plugin `.codex-plugin/mcp.json`. No other Plugin Skill file may differ from the canonical Skill.
+The dependency `value` must match the server name in the Plugin `.codex-plugin/mcp.json`. No other Plugin Skill file may differ from the canonical Skill, apart from the CLI pin that I2 in §22.4 requires of generated Skill fallbacks, which in the mirror means the two fallback lines in `SKILL.md`.
+
+Known open item: the Plugin manifest already owns that MCP registration, so the mirrored declaration duplicates it and Codex can emit a `missing command for stdio dependency` warning when the Skill loads. Removing the append is a Plugin public-contract change, so it is deferred out of the package-runner alias work and no follow-up issue is filed yet. This paragraph is the design-side record of the deferral; the release-facing one is the `Known issues` entry in the `Unreleased` CHANGELOG section.
 
 A Plugin with its bundled `kyoso` MCP disabled is not a CLI-fallback mode. Doctor directs users to re-enable that MCP or remove the Plugin and install the canonical CLI plus Skill-only distribution instead.
 
@@ -2293,7 +2296,7 @@ Claude Code resolves the inline `mcpServers` declaration in
 mirror, but only the Codex manifest carries Codex-specific metadata and only
 the Claude manifest carries the Claude-compatible MCP shape.
 
-Marketplace Plugin `0.7.15` pins `@kyo-so/cli@0.16.7` and uses `npx --package` to select the `kyoso` executable explicitly. Its Codex MCP definition allowlists `OPENROUTER_API_KEY`. Its Claude MCP definition declares optional empty-default placeholders for `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and `OPENROUTER_API_KEY`, because Claude Code does not implicitly inherit its own OAuth token into an MCP subprocess. These surfaces expose variable names without storing credential values. Kyoso applies the configured Claude auth preference before launching the Claude child, forwards the OpenRouter value only to a Codex child that explicitly selects OpenRouter, and treats an empty optional expansion or a recognized unexpanded credential placeholder as missing.
+Marketplace Plugin `0.7.16` pins `@kyo-so/cli@0.16.7` and uses `npx --package` with the `kyoso-cli` npm alias to select the `kyoso` executable explicitly. Its Codex MCP definition allowlists `OPENROUTER_API_KEY`. Its Claude MCP definition declares optional empty-default placeholders for `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and `OPENROUTER_API_KEY`, because Claude Code does not implicitly inherit its own OAuth token into an MCP subprocess. These surfaces expose variable names without storing credential values. Kyoso applies the configured Claude auth preference before launching the Claude child, forwards the OpenRouter value only to a Codex child that explicitly selects OpenRouter, and treats an empty optional expansion or a recognized unexpanded credential placeholder as missing.
 
 The distribution contract has these required invariants, checked by
 `plugin:verify` in normal CI and promotion verification:
@@ -2302,7 +2305,8 @@ The distribution contract has these required invariants, checked by
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | I1 — Plugin version | `.codex-plugin/plugin.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` metadata and Kyoso entry, the compatibility contract, and `pluginRuntimeContract.ts` use one Plugin version. |
 | I2 — CLI pin        | `.codex-plugin/mcp.json`, the Claude inline MCP definition, generated Skill fallbacks, and the compatibility `mcpPackagePin` use one CLI package pin.                                                     |
-| I3 — exact SemVer   | Every CLI pin is exactly `@kyo-so/cli@X.Y.Z`; ranges, tags, and unpinned package names are rejected.                                                                                                      |
+| I3 — exact SemVer   | That pin is an exact `@kyo-so/cli@X.Y.Z`; ranges, tags, and unpinned package names are rejected.                                                                                                          |
+| I4 — alias form     | Every pin written into a package-runner argv carries the `kyoso-cli@npm:` alias; an unaliased argv pin is rejected. The compatibility `mcpPackagePin` is not an argv and records the bare pin instead.    |
 
 Additional guards preserve the boundary around those invariants:
 
@@ -2316,8 +2320,14 @@ Additional guards preserve the boundary around those invariants:
   promotion. After a CLI release, a best-effort reminder compares the release
   tag with both Plugin pins and skips an open issue with the same title; it
   must not fail the already-published release.
+- The repository must not track a project-local MCP registration
+  (`.codex/config.toml` or `.mcp.json`); see §23.3 for why. The check reads the
+  git index, so it applies only when verification runs against the repository
+  root, and it fails closed when `git ls-files` cannot run.
 
-`pack:verify` proves the local package separately from the registry: it checks the original multi-bin tarball and direct Node MCP server, then runs npx/bunx against a synthetic dependency-free runner package with a failing ambient-`kyoso` sentinel. `plugin:verify:published-cli` instead verifies the exact published registry artifact with separate empty npx/Bun caches, exact server version and tool set, and the same sentinel. Promotion CI runs that first-party artifact smoke before installing Safe-chain shims so registry metadata and MCP stdout are observed without wrapper mutation; subsequent dependency installation remains protected. `plugin-promote` reruns the metadata→npx→bunx verifier before preparing any updates; a post-write failure restores original bytes and modes before returning non-zero.
+`pack:verify` proves the local package separately from the registry: it checks the original multi-bin tarball and direct Node MCP server, then runs npx/bunx against a synthetic dependency-free runner package with a failing ambient-`kyoso` sentinel. Alongside the long-standing forbidden-prefix rejections, it holds two exclusions that no other verifier enforces. Maintainer-only source templates must stay unpublished, and because that exclusion lives in two halves it checks each half separately: the packed manifest must still declare the `files` negation glob, and the verifier's own pattern must still match a real entry under `examples/`. A rename or typo therefore cannot make the check vacuously true. Both halves assume `examples/` stays flat: npm's `*` and the verifier's own `[^/]*` both stop at a `/`, so a template moved into a subdirectory would slip past each of them. A `.kyoso-install.json` Skill install marker must not appear in the tarball at all; `.gitignore` keeps a marker out of `git add`, but `npm pack` does not consult it while a `files` allowlist is in place, so `pack:verify` is the only publish-stage gate, tracked or not; §23.3 covers that division of labor from the maintainer's side. `plugin:verify:published-cli` instead verifies the exact published registry artifact with separate empty npx/Bun caches, exact server version and tool set, and the same sentinel. Promotion CI runs that first-party artifact smoke before installing Safe-chain shims so registry metadata and MCP stdout are observed without wrapper mutation; subsequent dependency installation remains protected. `plugin-promote` reruns the metadata→npx→bunx verifier before preparing any updates; a post-write failure restores original bytes and modes before returning non-zero.
+
+The alias form divides those two gates. `pack:verify`'s local smokes run the explicit package-and-executable form but not the alias, because an `alias@npm:` specifier only names a registry package and a `file:` tarball cannot be installed through one. `plugin:verify:published-cli` is therefore the only executor of the alias, and promotion CI runs it before the Plugin pin ships. The consequence for users is that a CLI release ships the aliased Skill fallback and the aliased `kyoso setup` output before any gate has executed the alias; a runtime that stopped resolving it would block the following Plugin promotion, not that release.
 
 Plugin runtime evidence uses schema v2. The migrator creates a same-directory candidate, reprobes every recorded Codex version exactly once, validates the complete version set and bundled contract, and atomically replaces the record only after all probes succeed. Candidate and supported parent-directory sync complete before rename; rename is the commit point and no fallible operation follows it. It never hand-edits evidence rows; pre-commit failure or concurrent modification leaves the current record unchanged. `plugin:runtime:verify` is the read-only replay gate.
 
@@ -2332,17 +2342,17 @@ reintroduction of the root file.
 
 ## 23. Client configuration examples
 
-These are user-managed manual client-registration templates, not Marketplace Plugin manifest templates. The `--with-openrouter` additions below therefore apply only when `kyoso setup` creates a new manual entry; Marketplace Plugin `0.7.15` has its separate pinned `@kyo-so/cli@0.16.7` contract described in §22.4.
+These are user-managed manual client-registration templates, not Marketplace Plugin manifest templates. The `--with-openrouter` additions below therefore apply only when `kyoso setup` creates a new manual entry; Marketplace Plugin `0.7.16` has its separate pinned `@kyo-so/cli@0.16.7` contract described in §22.4.
 
 ### 23.1 Codex config example
 
 ```toml
 [mcp_servers.kyoso]
 command = "npx"
-args = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]
+args = ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]
 env_vars = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "CODEX_ACCESS_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
 startup_timeout_sec = 20
-tool_timeout_sec = 360
+tool_timeout_sec = 2160
 enabled = true
 ```
 
@@ -2351,10 +2361,10 @@ Alternative Bun path:
 ```toml
 [mcp_servers.kyoso]
 command = "bunx"
-args = ["--package", "@kyo-so/cli", "kyoso", "mcp"]
+args = ["--package", "kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]
 env_vars = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "CODEX_ACCESS_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
 startup_timeout_sec = 20
-tool_timeout_sec = 360
+tool_timeout_sec = 2160
 enabled = true
 ```
 
@@ -2369,7 +2379,7 @@ Initial placeholder:
   "mcpServers": {
     "kyoso": {
       "command": "npx",
-      "args": ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+      "args": ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
       "env": {
         "OPENAI_API_KEY": "${OPENAI_API_KEY}",
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
@@ -2387,9 +2397,135 @@ for Codex, or adds `"OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"` to the
 Claude Code environment. Existing entries are preserved and must be changed
 manually.
 
+### 23.3 Maintainer runtime selection
+
+Kyoso is reviewed with Kyoso, so a maintainer working in this repository can
+reach the review tools through four distinct runtimes: the installed Plugin, a
+user-managed MCP backed by the published CLI, the published CLI invoked
+directly, and the current source. The last one is reachable either as a CLI or
+as an MCP server, which is why the table below has five rows. They resolve
+through different code, so a review is only meaningful when the runtime is
+chosen deliberately.
+
+| Intent                                              | Runtime                                                                                                                          |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Test the installed Plugin                           | Invoke the installed `kyoso:kyoso-review` Skill; add no project-local `kyoso` MCP entry                                          |
+| Test a user-managed MCP backed by the published CLI | `kyoso setup codex --write --global` or `kyoso setup claude-code --write --global`                                               |
+| Test the published CLI directly                     | `npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso ...` or `bunx --package kyoso-cli@npm:@kyo-so/cli kyoso ...`                   |
+| Test the current source as CLI                      | `safe-chain bun run dev -- <command> ...`                                                                                        |
+| Test the current source as MCP                      | Copy `examples/codex-source-config.toml` or `examples/claude-code-source-mcp.json` and invoke the distinct `kyoso-source` server |
+
+Four rules keep those runtimes from silently replacing each other:
+
+- The repository must not track a project-local MCP registration:
+  `.codex/config.toml` for Codex, `.mcp.json` for Claude Code. A project-local
+  `kyoso` server takes precedence over the installed Plugin and over the user's
+  own published-CLI registration, so a tracked one would redirect every
+  maintainer's review without any visible signal. `plugin:verify` rejects any
+  reintroduction of either tracked file, and `.gitignore` keeps the untracked
+  maintainer copies — which the source-MCP workflow expects — out of `git add`.
+  The `plugin:verify` guard is a repository-root pathspec, so it looks only at
+  the root pair; the ignore entries are anchored to match, except `.codex/`,
+  which is deliberately left unanchored and so also sweeps up a nested
+  `.codex/` the guard would not inspect. Anchoring it is an open question
+  rather than a decision, because the loose form is the safer of the two while
+  the guard's own reach stays at the root.
+- The source MCP entry uses the server name `kyoso-source`, never `kyoso`. The
+  distinct name makes the active runtime observable in the client's MCP list.
+- The published-CLI route needs `--global` on both clients, for different
+  reasons. On Claude Code, when `~/.claude.json` holds no enabled registration
+  to conflict with, `ensureClaudeMcp` writes `<cwd>/.mcp.json` with the server
+  name `kyoso` — the override the first rule prohibits, and untracked, so the
+  `plugin:verify` guard cannot catch it. It also installs the Skill into
+  `<cwd>/.claude/skills/kyoso-review`, a directory this repository does not
+  otherwise use; `.gitignore` covers it. On Codex, `--global` does not move the
+  MCP entry at all (`resolveCodexConfigPath` ignores scope), but it moves the
+  Skill: a project-scoped install targets `<cwd>/.agents/skills/kyoso-review`,
+  which in this repository is the canonical Skill that ships inside the npm
+  package. Setup adopts a digest-matching copy by writing `.kyoso-install.json`
+  into it and replaces a known historical copy outright, neither of which
+  requires `--force`. Two different gates cover that marker at two different
+  stages, and they do not overlap: `.gitignore` keeps it out of `git add`, and
+  `pack:verify` is the only publish-stage gate, tracked or not. `.gitignore`
+  contributes nothing at publish time — `npm pack` reads the working tree, and
+  while a `files` allowlist is in place it does not consult the repository's
+  `.gitignore` at all — so an untracked marker sitting in a maintainer's
+  checkout would otherwise ship just as a tracked one would.
+  `plugin:verify` compares the canonical Skill against the Plugin mirror as
+  whole file sets, marker included, so it does reject a marker that exists on
+  only one side — but `plugin:sync` copies the marker into the mirror, after
+  which the two sides match and that gate passes. The Skill digest cannot catch
+  it either, because the installer excludes `.kyoso-install.json` from the hash
+  by design. The commit-stage entry covers the canonical Skill only, so a marker
+  that `plugin:sync` has already copied into the mirror can still be staged. The
+  npm package does not carry `plugins/`, so that cannot reach consumers; what it
+  produces is a fresh clone whose mirror has a marker the canonical Skill lacks,
+  which `plugin:verify` rejects on the next run. That is a loud failure rather
+  than a silent one, so the entry is left covering the canonical path alone.
+- Only one MCP server named `kyoso` is active at a time. A global registration
+  persists across repositories, so testing the Plugin means disabling or
+  removing it first, and vice versa. Doctor states the ambiguity rather than
+  resolving it: `Plugin and manual Codex MCP registrations coexist; neither
+registration was changed.`
+
+`dev:mcp` runs the MCP server from the current source: `bun run
+src/cli/main.ts mcp`. Neither the script nor the `examples/*-source-*` entries
+carry `--trust-config`. Per §10.2 that flag approves executing a legacy
+`kyoso.config.ts` without a prompt; `kyoso.toml` is data and loads without any
+trust decision, so this repository's dogfooding configuration — including the
+verification round it enables — needs no flag at all. Granting a maintainer
+template the standing ability to execute an arbitrary directory's
+`kyoso.config.ts` would be pure downside, so the flag is absent everywhere.
+
+Nothing in a source entry binds it to this checkout: `bun run dev:mcp` resolves
+against whatever working directory the client launches it from. Registering one
+globally would therefore run an unrelated repository's source, so the entries
+must be registered project-locally. The reach of that mistake is the full
+forwarded credential set below, not just the wrong code: the entry hands every
+one of those variables to whichever `dev:mcp` script the launch directory
+defines. That constraint is an operating rule, not a mechanism the entry
+enforces on its own.
+
+The `examples/*-source-*` templates are maintainer tooling and are excluded
+from the npm package by the `!examples/*-source-*` entry in `files`;
+`pack:verify` fails if one is published. The Codex source template's timeouts
+match the shipped Codex template in §23.1 — the Claude templates set none on
+either side. Server name, `command`, and `args` differ by design; within the
+forwarded credential set the single deliberate divergence is an unconditional
+`OPENROUTER_API_KEY`, which §6.6 and §23.2 add only under `--with-openrouter`.
+A shipped template is written once and copied by every user, so its default
+must be least privilege. A source template is copied by hand by the one
+maintainer who is reviewing this checkout, on a machine that already holds
+these credentials, and dropping the line takes one edit — so the cost of
+guessing wrong falls on that maintainer alone, and paying it with a second
+`--with-openrouter` variant of a hand-copied file is not worth the drift.
+The Codex template states those rules in its own
+comments; `examples/claude-code-source-mcp.json` cannot, because JSON has no
+comment syntax, so a maintainer who copies that file learns it must be
+registered project-locally only from this section and from `AGENTS.md` — and in
+practice from `AGENTS.md`, which is what an agent working in this repository
+reads. Their guidance lives in those two places, not in `README.md`, because the
+README ships inside the npm package.
+
+Doctor's coverage of those two files is asymmetric. `detectSetup` reads
+`<cwd>/.mcp.json`, so a Claude Code source entry misnamed `kyoso` is classified
+`custom` — its `bun` command is not a package runner — and reported as
+`custom/unverified` rather than ready. It reads only the Codex config that
+`CODEX_HOME` or `~/.codex` resolves to, so a project-local
+`.codex/config.toml` is outside its view unless `CODEX_HOME` points there —
+`resolveCodexConfigPath` resolves `CODEX_HOME` against the current directory,
+so a relative value such as `.codex` does select the checkout's own file.
+Project-local override detection covers `projects.<path>` blocks inside that
+global file. On the Codex side, in the ordinary configuration where
+`CODEX_HOME` is unset or absolute, the distinct server name is therefore the
+only defense, and keeping it is a maintainer obligation rather than something
+the tooling verifies.
+
 ---
 
 ## 24. `package.json` design
+
+The sketch below dates from the MVP and shows the shape, not the current file. Its `version` and `files` in particular have moved on — the shipped `files` now carries the `"!examples/*-source-*"` negation that keeps maintainer-only templates unpublished (§23.3). Read `package.json` itself for the current values; `pack:verify` is what holds them to the contract.
 
 ```json
 {
@@ -2445,7 +2581,7 @@ const result = spawnSync(
 process.exit(result.status ?? 1);
 ```
 
-Prefer a bundled JS output compatible with Node where possible, but do not block MVP on perfect packaging. The explicit npx form is compatible across supported Node/npm environments, and `bunx --package <pkg> <binary>` is supported on Bun 1.3.14 or newer. Neither form relies on package-manager binary inference.
+Prefer a bundled JS output compatible with Node where possible, but do not block MVP on perfect packaging. The explicit npx form is compatible across supported Node/npm environments, and `bunx --package <pkg> <binary>` is supported on Bun 1.3.14 or newer. Both accept the `kyoso-cli@npm:@kyo-so/cli` alias specifier. Neither form relies on package-manager binary inference, and neither can resolve a same-named workspace instead of the published package.
 
 ---
 
@@ -2657,8 +2793,8 @@ These references were used to align the design with current protocol and tool be
 
 MVP is considered complete when all of the following pass:
 
-1. `bunx --package @kyo-so/cli kyoso mcp` starts MCP server without stdout noise on the verified Bun baseline.
-2. `npx -y --package=@kyo-so/cli kyoso mcp` starts MCP server without relying on executable inference.
+1. `bunx --package kyoso-cli@npm:@kyo-so/cli kyoso mcp` starts MCP server without stdout noise on the verified Bun baseline.
+2. `npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso mcp` starts MCP server without relying on the current workspace package identity.
 3. Codex can register Kyoso as an MCP stdio server.
 4. Claude Code can register Kyoso as an MCP stdio server.
 5. `plan_review` calls both Codex ACP and Claude ACP or fake equivalents in test.

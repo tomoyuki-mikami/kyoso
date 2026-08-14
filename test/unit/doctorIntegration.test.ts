@@ -67,7 +67,7 @@ describe("doctor integration modes", () => {
             "status: ready; MCP is optional for CLI plus Skill mode.",
           );
           expect(output).not.toContain(
-            `next: run \`npx -y --package=@kyo-so/cli kyoso setup ${client} --write\``,
+            `next: run \`npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup ${client} --write\``,
           );
         }
         if (expectedMode === "skill-on-demand") {
@@ -903,9 +903,147 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
     expect(output).toContain("Codex registration: repair required (legacy)");
     expect(output).toContain("Codex integration: unknown");
     expect(output).toContain(
-      "npx -y --package=@kyo-so/cli kyoso setup codex --write --runner npx --force",
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write --runner npx --force",
     );
     expect(output).not.toContain("Codex integration: manual-mcp");
+  });
+
+  test("does not report an unaliased explicit manual MCP as ready", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.codexHome, "config.toml"),
+      '[mcp_servers.kyoso]\ncommand = "npx"\nargs = ["-y", "--package=@kyo-so/cli@0.16.7", "kyoso", "mcp"]\nenabled = true\n',
+      "utf8",
+    );
+    await createExecutable(join(context.bin, "npx"));
+    await createSkill(context, "codex");
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain("Codex registration: repair required (legacy)");
+    expect(output).toContain(
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write --runner npx --force",
+    );
+    expect(output).not.toContain("Codex integration: manual-mcp");
+  });
+
+  test("does not report an unaliased explicit Bun manual MCP as ready", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.codexHome, "config.toml"),
+      '[mcp_servers.kyoso]\ncommand = "bunx"\nargs = ["--package", "@kyo-so/cli@0.16.7", "kyoso", "mcp"]\nenabled = true\n',
+      "utf8",
+    );
+    await createExecutable(join(context.bin, "npx"));
+    await createSkill(context, "codex");
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    // Doctor never spawns the Bun runner, so an unaliased Bun argv is reported
+    // as legacy with a runner-explicit repair path rather than as ready.
+    expect(output).toContain("Codex registration: repair required (legacy)");
+    expect(output).toContain(
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write --runner npx --force",
+    );
+    // No Bun repair path exists in this fixture, so the offered command changes
+    // the runner. Saying so is the difference between a repair the reader
+    // consented to and one that silently drops Bun.
+    expect(output).toContain(
+      "It also moves the registration from bunx to npx.",
+    );
+    expect(output).toContain(
+      "omits the kyoso-cli npm alias, so it can resolve a same-named workspace",
+    );
+    expect(output).not.toContain("Codex integration: manual-mcp");
+  });
+
+  test("offers the Bun repair path for a legacy Bun manual MCP when Bun is usable", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.codexHome, "config.toml"),
+      '[mcp_servers.kyoso]\ncommand = "bunx"\nargs = ["--package", "@kyo-so/cli@0.16.7", "kyoso", "mcp"]\nenabled = true\n',
+      "utf8",
+    );
+    await createExecutable(join(context.bin, "npx"));
+    await createExecutable(join(context.bin, "bunx"));
+    await createInstalledCli(context);
+    await createSkill(context, "codex");
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain("Codex registration: repair required (legacy)");
+    expect(output).toContain("kyoso setup codex --write --runner bunx --force");
+    expect(output).not.toContain("--runner npx --force");
+    expect(output).not.toContain("It also moves the registration");
+  });
+
+  // The runner preference is asymmetric, so bunx-to-npx alone does not prove it.
+  // Here npx is the registration's own runner but is unavailable, and the only
+  // executable path moves it to Bun.
+  test("names the move to Bun when a legacy npx MCP has no npx available", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.codexHome, "config.toml"),
+      '[mcp_servers.kyoso]\ncommand = "npx"\nargs = ["-y", "@kyo-so/cli", "mcp"]\nenabled = true\n',
+      "utf8",
+    );
+    await createExecutable(join(context.bin, "bunx"));
+    await createInstalledCli(context);
+    await createSkill(context, "codex");
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain("Codex registration: repair required (legacy)");
+    expect(output).toContain("kyoso setup codex --write --runner bunx --force");
+    expect(output).toContain(
+      "It also moves the registration from npx to bunx.",
+    );
+  });
+
+  // With no runner and no installed CLI there is nothing to propose, so this
+  // warning is the only thing the user sees — including the reason.
+  test("names the legacy shape when no repair path is executable", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.codexHome, "config.toml"),
+      '[mcp_servers.kyoso]\ncommand = "npx"\nargs = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]\nenabled = true\n',
+      "utf8",
+    );
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain("Codex registration: repair required (legacy)");
+    expect(output).toContain(
+      "omits the kyoso-cli npm alias, so it can resolve a same-named workspace",
+    );
+    expect(output).toContain(
+      "No executable Kyoso repair path is available, so update it manually.",
+    );
   });
 
   test("prints a client-specific legacy repair command for Claude project MCP", async () => {
@@ -928,7 +1066,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
       "Claude Code registration: repair required (legacy)",
     );
     expect(output).toContain(
-      "npx -y --package=@kyo-so/cli kyoso setup claude-code --write --runner npx --force",
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup claude-code --write --runner npx --force",
     );
   });
 
@@ -950,7 +1088,38 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
     });
 
     expect(output).toContain(
-      "npx -y --package=@kyo-so/cli kyoso setup claude-code --write --runner npx --force",
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup claude-code --write --runner npx --force",
+    );
+  });
+
+  // Every other legacy test here uses a scope doctor can offer a repair command
+  // for. This is the opposite case: the user is told to edit the file by hand,
+  // so the reason is the only thing that says whether to add the alias or
+  // restructure the argv.
+  test("names the legacy shape for a Claude user-config MCP it cannot migrate", async () => {
+    const context = await doctorFixture();
+    await writeFile(
+      join(context.home, ".claude.json"),
+      '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","--package=@kyo-so/cli","kyoso","mcp"]}}}\n',
+      "utf8",
+    );
+    await createExecutable(join(context.bin, "npx"));
+
+    const output = await runDoctor({
+      cwd: context.cwd,
+      ignoreConfig: true,
+      env: context.env,
+      pluginInspector: () => pluginUnsupported,
+    });
+
+    expect(output).toContain(
+      "Claude Code registration: repair required (legacy)",
+    );
+    expect(output).toContain(
+      "omits the kyoso-cli npm alias, so it can resolve a same-named workspace",
+    );
+    expect(output).toContain(
+      "claude-global scope is not automatically migrated; update it manually.",
     );
   });
 
@@ -959,7 +1128,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
     await createManualMcp(context, "claude-code");
     await writeFile(
       join(context.home, ".claude.json"),
-      '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","--package=@kyo-so/cli","kyoso","mcp"]}}}\n',
+      '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]}}}\n',
       "utf8",
     );
     await createExecutable(join(context.bin, "npx"));
@@ -1041,7 +1210,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
     const bunxPath = join(context.bin, "bunx");
     await writeFile(
       join(context.codexHome, "config.toml"),
-      '[mcp_servers.kyoso]\ncommand = "bunx"\nargs = ["--package", "@kyo-so/cli", "kyoso", "mcp"]\nenabled = true\n',
+      '[mcp_servers.kyoso]\ncommand = "bunx"\nargs = ["--package", "kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]\nenabled = true\n',
       "utf8",
     );
     await createSkill(context, "codex");
@@ -1067,7 +1236,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
       "normal doctor does not verify the required Bun capability",
     );
     expect(output).toContain(
-      "npx -y --package=@kyo-so/cli kyoso setup codex --write --runner bunx",
+      "npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso setup codex --write --runner bunx",
     );
     expect(existsSync(invocationPath)).toBe(false);
   });
@@ -1099,7 +1268,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
         mcpServers: {
           kyoso: {
             command: "npx",
-            args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+            args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
             env: { NODE_OPTIONS: "--require /tmp/payload.js" },
           },
         },
@@ -1289,7 +1458,7 @@ allowProjectProvider = [${JSON.stringify(context.cwd)}]
       [
         "[mcp_servers.kyoso]",
         'command = "npx"',
-        'args = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]',
+        'args = ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]',
         "enabled = true",
         "",
         '[plugins."kyoso@kyoso".mcp_servers.kyoso]',
@@ -1530,7 +1699,7 @@ async function createManualMcp(
       mcpServers: {
         kyoso: {
           command: "npx",
-          args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+          args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
           enabled: true,
         },
       },
@@ -1547,7 +1716,7 @@ async function writeCodexMcp(
   const path = join(codexHome, "config.toml");
   await writeFile(
     path,
-    `[mcp_servers.kyoso]\ncommand = "npx"\nargs = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]\nenabled = ${enabled}\n`,
+    `[mcp_servers.kyoso]\ncommand = "npx"\nargs = ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]\nenabled = ${enabled}\n`,
     "utf8",
   );
   return path;

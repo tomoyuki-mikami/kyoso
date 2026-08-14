@@ -1,5 +1,10 @@
 node_modules/
 dist/
 .kyoso/
+.claude/worktrees/
+.codex/
+/.mcp.json
+/.claude/skills/
+/.agents/skills/kyoso-review/.kyoso-install.json
 .direnv/
 .DS_Store

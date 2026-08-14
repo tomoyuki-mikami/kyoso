@@ -2,18 +2,197 @@ import { describe, expect, test } from "bun:test";
 import { readFile, readdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { CURRENT_SKILL_DIGEST } from "../../src/cli/knownSkillDigests.js";
+import {
+  CURRENT_SKILL_DIGEST,
+  KNOWN_SKILL_DIGESTS_BY_VERSION,
+  knownSkillDigest,
+} from "../../src/cli/knownSkillDigests.js";
 import {
   MINIMUM_SUPPORTED_CODEX_VERSION,
   PLUGIN_RUNTIME_COMPATIBILITY_SCHEMA_VERSION,
   PLUGIN_RUNTIME_EXPECTED_CONTRACT,
 } from "../../src/cli/pluginRuntimeContract.js";
 import { hashSkillDirectory } from "../../src/cli/skillInstall.js";
+import { KYOSO_PACKAGE_ALIAS_PREFIX } from "../../src/cli/packageRunner.js";
 // @ts-expect-error The distribution verifier is intentionally shipped as a standalone Node.js script.
 import { transformCanonicalToPlugin } from "../../scripts/plugin-distribution.mjs";
+// @ts-expect-error Same standalone script; kept as its own statement so Prettier cannot move the directive off the import.
+import { pluginMcpPackageAliasPrefix } from "../../scripts/plugin-distribution.mjs";
+// @ts-expect-error The pack exclusions are shared with the standalone pack verifier.
+import { packageEntryFailures } from "../../scripts/pack-exclusions.mjs";
 
 const root = process.cwd();
 describe("Codex Plugin fixture", () => {
+  test("keeps published and source MCP examples explicit and distinct", async () => {
+    const packageMetadata = await readJson(join(root, "package.json"));
+    const publishedCodex = await readFile(
+      join(root, "examples", "codex-config.toml"),
+      "utf8",
+    );
+    const sourceCodex = await readFile(
+      join(root, "examples", "codex-source-config.toml"),
+      "utf8",
+    );
+    const publishedClaude = await readJson(
+      join(root, "examples", "claude-code-mcp.json"),
+    );
+    const sourceClaude = await readJson(
+      join(root, "examples", "claude-code-source-mcp.json"),
+    );
+
+    expect(publishedCodex).toContain("[mcp_servers.kyoso]");
+    expect(publishedCodex).toContain('"--package=kyoso-cli@npm:@kyo-so/cli"');
+    expect(publishedCodex).not.toContain("kyoso-source");
+    expect(publishedClaude.mcpServers.kyoso).toMatchObject({
+      command: "npx",
+      args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
+    });
+    expect(Object.keys(publishedClaude.mcpServers)).toEqual(["kyoso"]);
+
+    expect(sourceCodex).toContain("[mcp_servers.kyoso-source]");
+    expect(sourceCodex).toContain('command = "bun"');
+    expect(sourceCodex).toContain('args = ["run", "dev:mcp"]');
+    expect(sourceClaude.mcpServers["kyoso-source"]).toMatchObject({
+      command: "bun",
+      args: ["run", "dev:mcp"],
+    });
+    expect(Object.keys(sourceClaude.mcpServers)).toEqual(["kyoso-source"]);
+
+    // The source template's timeouts are documented as equal to the shipped
+    // template's; nothing else holds those two files together.
+    for (const setting of ["startup_timeout_sec", "tool_timeout_sec"]) {
+      const value = (toml: string) =>
+        toml.match(new RegExp(`^${setting} = (\\d+)$`, "m"))?.[1];
+      expect(value(sourceCodex)).toBe(value(publishedCodex));
+      expect(value(sourceCodex)).toBeDefined();
+    }
+    // §23.3 records the Claude templates as carrying no timeouts at all, which
+    // is why only the Codex pair is compared above.
+    expect(JSON.stringify(publishedClaude)).not.toContain("timeout");
+    expect(JSON.stringify(sourceClaude)).not.toContain("timeout");
+
+    // §23.3 states that the one deliberate divergence between a source template
+    // and its shipped counterpart is the unconditional `OPENROUTER_API_KEY`.
+    // That is a claim about which credentials reach the source subprocess, so
+    // widening either list must fail here rather than quietly outdate the doc.
+    // The same claim is stated in the Codex template's own comments and in
+    // `AGENTS.md`; all three have to move together when this test does.
+    const codexEnvVars = (toml: string) =>
+      (
+        (toml.match(/^env_vars = \[(.*)\]$/m)?.[1] ?? "").match(/"[^"]+"/g) ??
+        []
+      ).map((quoted) => quoted.slice(1, -1));
+    const withOpenRouter = (names: string[]) =>
+      [...names, "OPENROUTER_API_KEY"].sort();
+    expect(codexEnvVars(sourceCodex).sort()).toEqual(
+      withOpenRouter(codexEnvVars(publishedCodex)),
+    );
+    expect(codexEnvVars(publishedCodex).length).toBeGreaterThan(0);
+    expect(
+      Object.keys(sourceClaude.mcpServers["kyoso-source"].env).sort(),
+    ).toEqual(
+      withOpenRouter(Object.keys(publishedClaude.mcpServers.kyoso.env)),
+    );
+    // Sorting above proves the set but not the shape. The source list is the
+    // shipped list with one name inserted, so a reader diffing the two files
+    // should see exactly one added line; reordering the rest would still pass
+    // the set comparison while making that diff unreadable.
+    expect(codexEnvVars(sourceCodex)).toEqual([
+      ...codexEnvVars(publishedCodex).slice(0, 4),
+      "OPENROUTER_API_KEY",
+      ...codexEnvVars(publishedCodex).slice(4),
+    ]);
+    expect(codexEnvVars(publishedCodex)[3]).toBe("CODEX_ACCESS_TOKEN");
+
+    // `--trust-config` approves executing a legacy `kyoso.config.ts` in the
+    // launching working directory. A maintainer template must never carry that
+    // standing grant, so neither the entries nor the script may request it.
+    // Comments legitimately name the flag, so they are stripped before the check
+    // rather than matching only the `args` line.
+    const codexDirectives = sourceCodex
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(codexDirectives).not.toContain("--trust-config");
+    expect(JSON.stringify(sourceClaude)).not.toContain("--trust-config");
+    expect(packageMetadata.scripts["dev:mcp"]).toBe(
+      "bun run src/cli/main.ts mcp",
+    );
+    expect(packageMetadata.files).toContain("!examples/*-source-*");
+  });
+
+  // The alias only protects a reader who copies the command, so the documents
+  // that publish those commands are part of the contract. `plugin:verify` covers
+  // the shipped artifacts; nothing else covered the prose until this test.
+  test("keeps every documented package-runner command aliased", async () => {
+    // The package can follow `--package` three ways: joined by `=`, separated by
+    // a space, or held in the next element of a TOML/JSON array. The design doc
+    // and the Codex example both use the array form, so a pattern that only
+    // accepts `=` or a space would let exactly those lines regress unseen.
+    const packageArgument = (name: string) =>
+      new RegExp(`--package(?:[= ]|",\\s*)"?${name}`);
+    const unaliased = packageArgument("@kyo-so/cli");
+    const aliased = packageArgument("kyoso-cli@npm:@kyo-so/cli");
+    const documents = [
+      "README.md",
+      "README.ja.md",
+      "README.zh-CN.md",
+      "AGENTS.md",
+      "docs/kyoso_detailed_design.md",
+      ".agents/skills/kyoso-review/SKILL.md",
+      // Readers copy these verbatim into their own client configuration, so
+      // they carry the same contract as the prose.
+      "examples/codex-config.toml",
+      "examples/claude-code-mcp.json",
+    ];
+    // The CHANGELOG quotes commands only when a release changes one, so it must
+    // never publish an unaliased form but cannot be required to hold an aliased
+    // one.
+    const unaliasedOnly = ["CHANGELOG.md"];
+    const offenders: string[] = [];
+    const empty: string[] = [];
+    for (const relative of [...documents, ...unaliasedOnly]) {
+      const content = await readFile(join(root, relative), "utf8");
+      for (const [index, line] of content.split("\n").entries()) {
+        if (unaliased.test(line)) offenders.push(`${relative}:${index + 1}`);
+      }
+      // A JSON or TOML array can break between `--package` and the package, so
+      // the per-line scan above cannot see that form at all. Scanning the whole
+      // document catches it; the line loop stays because it reports where.
+      if (
+        unaliased.test(content) &&
+        !offenders.some((at) => at.startsWith(`${relative}:`))
+      ) {
+        offenders.push(`${relative}:(spans lines)`);
+      }
+      // Without this, deleting every command from a document would satisfy the
+      // check above rather than fail it.
+      if (documents.includes(relative) && !aliased.test(content)) {
+        empty.push(relative);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+    expect(empty).toEqual([]);
+
+    // The runtime a maintainer is actually exercising is only observable through
+    // the server name, so the two documents that describe the source runtime
+    // must keep calling it `kyoso-source`.
+    for (const relative of ["AGENTS.md", "docs/kyoso_detailed_design.md"]) {
+      const content = await readFile(join(root, relative), "utf8");
+      expect(content).toContain("kyoso-source");
+    }
+
+    // The CLI writes registrations and the distribution verifier checks them,
+    // but each holds its own copy of the prefix because one is TypeScript and
+    // the other a standalone Node.js script. Renaming only one would make the
+    // verifier reject every registration `kyoso setup` produces.
+    expect(KYOSO_PACKAGE_ALIAS_PREFIX).toBe(pluginMcpPackageAliasPrefix);
+    expect(
+      aliased.test(`--package=${KYOSO_PACKAGE_ALIAS_PREFIX}@kyo-so/cli`),
+    ).toBe(true);
+  });
+
   test("uses the fixed marketplace, plugin, and MCP identities", async () => {
     const packageMetadata = await readJson(join(root, "package.json"));
     const marketplace = await readJson(
@@ -56,7 +235,12 @@ describe("Codex Plugin fixture", () => {
     expect(mcp).toEqual({
       kyoso: {
         command: "npx",
-        args: ["-y", `--package=${distribution.mcpPackagePin}`, "kyoso", "mcp"],
+        args: [
+          "-y",
+          `--package=kyoso-cli@npm:${distribution.mcpPackagePin}`,
+          "kyoso",
+          "mcp",
+        ],
         env_vars: [
           "OPENAI_API_KEY",
           "CODEX_API_KEY",
@@ -77,7 +261,7 @@ describe("Codex Plugin fixture", () => {
     });
     expect(claudeManifest.mcpServers.kyoso.args).toEqual([
       "-y",
-      `--package=${distribution.mcpPackagePin}`,
+      `--package=kyoso-cli@npm:${distribution.mcpPackagePin}`,
       "kyoso",
       "mcp",
     ]);
@@ -105,7 +289,9 @@ describe("Codex Plugin fixture", () => {
     const mcp = await readJson(
       join(root, "plugins", "kyoso", ".codex-plugin", "mcp.json"),
     );
-    const cliPackagePin = mcp.kyoso.args[1].slice("--package=".length);
+    const cliPackagePin = mcp.kyoso.args[1].slice(
+      "--package=kyoso-cli@npm:".length,
+    );
     const canonicalSnapshot = await directorySnapshot(canonical);
 
     expect(await hashSkillDirectory(canonical)).toBe(CURRENT_SKILL_DIGEST);
@@ -119,20 +305,20 @@ describe("Codex Plugin fixture", () => {
     expect(pluginMetadata).toContain('value: "kyoso"');
     expect(pluginMetadata).toContain('transport: "stdio"');
     expect(canonicalInstructions).toContain(
-      "`npx -y --package=@kyo-so/cli kyoso`",
+      "`npx -y --package=kyoso-cli@npm:@kyo-so/cli kyoso`",
     );
     expect(canonicalInstructions).toContain(
-      "`bunx --package @kyo-so/cli kyoso`",
+      "`bunx --package kyoso-cli@npm:@kyo-so/cli kyoso`",
     );
     expect(canonicalInstructions).not.toContain(cliPackagePin);
     expect(canonicalInstructions).toContain(
       "`--set agents.<agent>.timeoutS=<seconds>`",
     );
     expect(pluginInstructions).toContain(
-      `\`npx -y --package=${cliPackagePin} kyoso\``,
+      `\`npx -y --package=kyoso-cli@npm:${cliPackagePin} kyoso\``,
     );
     expect(pluginInstructions).toContain(
-      `\`bunx --package ${cliPackagePin} kyoso\``,
+      `\`bunx --package kyoso-cli@npm:${cliPackagePin} kyoso\``,
     );
     expect(pluginInstructions).toContain(
       "`--set agents.<agent>.timeoutS=<seconds>`",
@@ -156,6 +342,27 @@ describe("Codex Plugin fixture", () => {
       "SKILL.md": pluginInstructions,
       "agents/openai.yaml": pluginMetadata,
     });
+  });
+
+  // This change edits the Skill inside an already-released version window, so
+  // the digest 0.16.7 actually shipped becomes historical under the version
+  // key `KYOSO_VERSION` still carries. Nothing else asserts the table's
+  // contents, so removing this entry at the next release bump would silently
+  // start calling the shipped 0.16.7 Skill unknown. The second assertion reads
+  // the table directly rather than going through `knownSkillDigest`, which
+  // answers `current` before it ever consults the table and would therefore
+  // hide the shipping digest being listed as historical too.
+  test("keeps the superseded 0.16.7 Skill recognizable", () => {
+    const historicalDigests = Object.values(
+      KNOWN_SKILL_DIGESTS_BY_VERSION,
+    ).flatMap((entries) => entries.map((entry) => entry.digest));
+
+    expect(
+      knownSkillDigest(
+        "sha256:1ea8914f4657741fcd544822326f80e82033078f8e2b11b1f5aad420072dcb39",
+      ),
+    ).toEqual({ version: "0.16.7", kind: "historical" });
+    expect(historicalDigests).not.toContain(CURRENT_SKILL_DIGEST);
   });
 
   test("records both probed Codex CLI versions and the minimum version", async () => {
@@ -550,6 +757,215 @@ describe("Codex Plugin fixture", () => {
     expect(result.status).toBe(0);
   });
 
+  // §23.3 and AGENTS.md call `.gitignore` the commit-stage guard on
+  // maintainer-local review state; `pack:verify` covers publish on its own,
+  // since `npm pack` does not consult `.gitignore` while a `files` allowlist is
+  // in place. `.gitignore` is the commit-stage gate for all four entries here,
+  // but only two of them have a second layer: §23.3 pairs it with
+  // `plugin:verify`'s tracked-file rejection for the MCP registrations, and the
+  // marker and the Skill copy have nothing else. Deleting a line here would
+  // silently drop that stage for them, so this test makes it loud instead.
+  test("keeps the commit-stage ignore entries the design doc relies on", async () => {
+    const patterns = (await readFile(join(root, ".gitignore"), "utf8"))
+      .split("\n")
+      .map((line) => line.trim());
+
+    for (const entry of [
+      "/.mcp.json",
+      "/.claude/skills/",
+      "/.agents/skills/kyoso-review/.kyoso-install.json",
+    ]) {
+      expect(patterns).toContain(entry);
+    }
+
+    // The Codex counterpart of `/.mcp.json`. It is asserted separately because
+    // it is currently unanchored while the others are anchored; the anchoring
+    // asymmetry is a known open question, so match either spelling rather than
+    // freezing today's one.
+    expect(
+      patterns.some((line) => line === ".codex/" || line === "/.codex/"),
+    ).toBe(true);
+  });
+
+  // `pack:verify` runs on a clean checkout, so CI only ever exercises the
+  // passing side of these rules and a mistyped pattern would stay invisible.
+  // The marker case is the one that matters most: `npm pack` does not consult
+  // `.gitignore` while a `files` allowlist is in place, so `pack:verify` is the
+  // only publish-stage gate for it, tracked or not.
+  test("rejects maintainer-local paths from a packed file list", () => {
+    // The forbidden prefixes predate this change and are not the only defense
+    // against any of them, so one case is enough to keep a mistyped prefix from
+    // going unnoticed.
+    expect(packageEntryFailures(["src/index.ts"])).toEqual([
+      "forbidden package prefix included: src/",
+    ]);
+
+    expect(
+      packageEntryFailures([
+        "examples/codex-source-config.toml",
+        "examples/claude-code-source-mcp.json",
+      ]),
+    ).toEqual([
+      "maintainer-only example included: examples/codex-source-config.toml",
+      "maintainer-only example included: examples/claude-code-source-mcp.json",
+    ]);
+
+    expect(
+      packageEntryFailures([".agents/skills/kyoso-review/.kyoso-install.json"]),
+    ).toEqual([
+      "Skill install marker included: .agents/skills/kyoso-review/.kyoso-install.json",
+    ]);
+
+    // The shipped counterparts must not trip either rule.
+    expect(
+      packageEntryFailures([
+        "examples/codex-config.toml",
+        "examples/claude-code-mcp.json",
+        ".agents/skills/kyoso-review/SKILL.md",
+      ]),
+    ).toEqual([]);
+  });
+
+  // The guard only runs against the repository root, so the packed-file-list
+  // cases above cannot reach it. These two pin what §22.4 states: a tracked
+  // project-local MCP registration is rejected — the CHANGELOG announces that
+  // half too — and an unreadable index fails closed rather than passing
+  // silently.
+  test("rejects a tracked project-local MCP registration", () => {
+    const result = spawnSync(
+      "node",
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          import { spawnSync } from "node:child_process";
+          import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+          import {
+            projectLocalMcpPaths,
+            verifyPluginDistribution,
+          } from "./scripts/plugin-distribution.mjs";
+
+          function failuresFor(root) {
+            try {
+              verifyPluginDistribution({
+                root,
+                verifyPackageArchive: false,
+                verifyTrackedProjectLocalMcp: true,
+              });
+              return "";
+            } catch (error) {
+              return String(error);
+            }
+          }
+
+          const fixture = mkdtempSync(join(tmpdir(), "kyoso-project-local-mcp-"));
+          try {
+            // Not a git repository: git exits non-zero and the guard must fail closed.
+            const closed = failuresFor(fixture);
+            if (!closed.includes("Tracked project-local MCP check failed")) {
+              throw new Error("missing index did not fail closed: " + closed);
+            }
+
+            spawnSync("git", ["init", "--quiet"], { cwd: fixture });
+            const clean = failuresFor(fixture);
+            if (clean.includes("Repository must not track")) {
+              throw new Error("clean index was rejected: " + clean);
+            }
+
+            // Hard-coded, not derived from projectLocalMcpPaths: iterating the
+            // list under test would let a removal from it pass silently.
+            const guarded = [".codex/config.toml", ".mcp.json"];
+            if (JSON.stringify(projectLocalMcpPaths) !== JSON.stringify(guarded)) {
+              throw new Error(
+                "projectLocalMcpPaths changed: " + JSON.stringify(projectLocalMcpPaths),
+              );
+            }
+            for (const path of guarded) {
+              mkdirSync(join(fixture, path, ".."), { recursive: true });
+              writeFileSync(join(fixture, path), "{}\\n");
+              spawnSync("git", ["add", "-f", "--", path], { cwd: fixture });
+              const tracked = failuresFor(fixture);
+              if (!tracked.includes("Repository must not track " + path)) {
+                throw new Error("tracked " + path + " was not rejected: " + tracked);
+              }
+              spawnSync("git", ["rm", "--cached", "--quiet", "--", path], { cwd: fixture });
+            }
+          } finally {
+            rmSync(fixture, { force: true, recursive: true });
+          }
+        `,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  });
+
+  test("names the violated pin invariant separately for I3 and I4", () => {
+    const result = spawnSync(
+      "node",
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+          import { verifyPluginDistribution } from "./scripts/plugin-distribution.mjs";
+
+          const scenarios = [
+            {
+              packageArgument: "--package=@kyo-so/cli@0.16.7",
+              expected: "must carry the kyoso-cli@npm: npm alias (invariant I4)",
+            },
+            {
+              packageArgument: "--package=kyoso-cli@npm:@kyo-so/cli@latest",
+              expected: "must pin an exact @kyo-so/cli SemVer (invariant I3)",
+            },
+          ];
+
+          const fixture = mkdtempSync(join(tmpdir(), "kyoso-plugin-pin-reason-"));
+          try {
+            cpSync(".agents", join(fixture, ".agents"), { recursive: true });
+            cpSync(".claude-plugin", join(fixture, ".claude-plugin"), { recursive: true });
+            cpSync("plugins", join(fixture, "plugins"), { recursive: true });
+            cpSync("docs/compatibility", join(fixture, "docs", "compatibility"), { recursive: true });
+            mkdirSync(join(fixture, "src", "cli"), { recursive: true });
+            cpSync("package.json", join(fixture, "package.json"));
+            cpSync("src/cli/knownSkillDigests.ts", join(fixture, "src", "cli", "knownSkillDigests.ts"));
+            cpSync("src/cli/pluginRuntimeContract.ts", join(fixture, "src", "cli", "pluginRuntimeContract.ts"));
+            const mcpPath = join(fixture, "plugins", "kyoso", ".codex-plugin", "mcp.json");
+            const original = readFileSync(mcpPath, "utf8");
+            for (const scenario of scenarios) {
+              const mcp = JSON.parse(original);
+              mcp.kyoso.args[1] = scenario.packageArgument;
+              writeFileSync(mcpPath, JSON.stringify(mcp, null, 2) + "\\n");
+              let message = "";
+              try {
+                verifyPluginDistribution({ root: fixture, verifyPackageArchive: false });
+              } catch (error) {
+                message = String(error);
+              }
+              if (!message.includes(scenario.expected)) {
+                throw new Error(scenario.packageArgument + " was not diagnosed: " + message);
+              }
+              writeFileSync(mcpPath, original);
+            }
+          } finally {
+            rmSync(fixture, { force: true, recursive: true });
+          }
+        `,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  });
+
   test("creates identifiable promotion reminders from the default branch", async () => {
     const workflow = await readFile(
       join(root, ".github", "workflows", "release.yml"),
@@ -570,6 +986,9 @@ describe("Codex Plugin fixture", () => {
     expect(reminder).toContain(
       '"<!-- kyoso:plugin-promotion-reminder cli=${RELEASE_VERSION} -->"',
     );
+    // The workflow extracts the pin with its own copy of the alias prefix, so a
+    // rename that updates only the JavaScript constants would break it here.
+    expect(workflow).toContain("--package=kyoso-cli@npm:@kyo-so/cli@");
   });
 
   test("rejects Plugin promotion workflow drift", () => {
@@ -1124,7 +1543,7 @@ describe("Codex Plugin fixture", () => {
             {
               name: "different Claude pin",
               mutate(manifest) {
-                manifest.mcpServers.kyoso.args[1] = "--package=@kyo-so/cli@0.9.0";
+                manifest.mcpServers.kyoso.args[1] = "--package=kyoso-cli@npm:@kyo-so/cli@0.9.0";
               },
               expected: [
                 "Claude plugin MCP package pin",
@@ -1134,10 +1553,10 @@ describe("Codex Plugin fixture", () => {
             {
               name: "non-SemVer Claude pin",
               mutate(manifest) {
-                manifest.mcpServers.kyoso.args[1] = "--package=@kyo-so/cli@latest";
+                manifest.mcpServers.kyoso.args[1] = "--package=kyoso-cli@npm:@kyo-so/cli@latest";
               },
               expected: [
-                "Claude plugin MCP package pin must be an exact @kyo-so/cli SemVer",
+                "Claude plugin MCP package pin must pin an exact @kyo-so/cli SemVer (invariant I3)",
               ],
             },
             {
@@ -1147,7 +1566,7 @@ describe("Codex Plugin fixture", () => {
                 manifest.mcpServers.kyoso.args = ["-y", pin, "mcp"];
               },
               expected: [
-                'Claude plugin MCP args must be ["-y", "--package=@kyo-so/cli@VERSION", "kyoso", "mcp"]',
+                'Claude plugin MCP args must be ["-y", "--package=kyoso-cli@npm:@kyo-so/cli@VERSION", "kyoso", "mcp"]',
               ],
             },
             {
@@ -1166,7 +1585,17 @@ describe("Codex Plugin fixture", () => {
                 manifest.mcpServers.kyoso.args[1] = "@kyo-so/cli@0.13.1";
               },
               expected: [
-                "Claude plugin MCP package pin must be an exact @kyo-so/cli SemVer",
+                "Claude plugin MCP package pin must carry the kyoso-cli@npm: npm alias (invariant I4)",
+                "args[1] was",
+              ],
+            },
+            {
+              name: "unaliased Claude package pin",
+              mutate(manifest) {
+                manifest.mcpServers.kyoso.args[1] = manifest.mcpServers.kyoso.args[1].replace("kyoso-cli@npm:", "");
+              },
+              expected: [
+                "Claude plugin MCP package pin must carry the kyoso-cli@npm: npm alias (invariant I4)",
                 "args[1] was",
               ],
             },
@@ -1183,19 +1612,19 @@ describe("Codex Plugin fixture", () => {
             {
               name: "tagged Claude package pin",
               mutate(manifest) {
-                manifest.mcpServers.kyoso.args[1] = "--package=@kyo-so/cli@latest";
+                manifest.mcpServers.kyoso.args[1] = "--package=kyoso-cli@npm:@kyo-so/cli@latest";
               },
               expected: [
-                "Claude plugin MCP package pin must be an exact @kyo-so/cli SemVer",
+                "Claude plugin MCP package pin must pin an exact @kyo-so/cli SemVer (invariant I3)",
               ],
             },
             {
               name: "ranged Claude package pin",
               mutate(manifest) {
-                manifest.mcpServers.kyoso.args[1] = "--package=@kyo-so/cli@^0.13.1";
+                manifest.mcpServers.kyoso.args[1] = "--package=kyoso-cli@npm:@kyo-so/cli@^0.13.1";
               },
               expected: [
-                "Claude plugin MCP package pin must be an exact @kyo-so/cli SemVer",
+                "Claude plugin MCP package pin must pin an exact @kyo-so/cli SemVer (invariant I3)",
               ],
             },
             {
@@ -1312,7 +1741,14 @@ describe("Codex Plugin fixture", () => {
               mutate({ mcp }) {
                 mcp.kyoso.args = ["-y", "@kyo-so/cli@0.13.1", "mcp"];
               },
-              expected: ["Plugin MCP package pin must be an exact @kyo-so/cli SemVer"],
+              expected: ["Plugin MCP package pin must carry the kyoso-cli@npm: npm alias (invariant I4)"],
+            },
+            {
+              name: "unaliased Codex package pin",
+              mutate({ mcp }) {
+                mcp.kyoso.args[1] = mcp.kyoso.args[1].replace("kyoso-cli@npm:", "");
+              },
+              expected: ["Plugin MCP package pin must carry the kyoso-cli@npm: npm alias (invariant I4)"],
             },
             {
               name: "wrong executable",
@@ -1396,8 +1832,8 @@ describe("Codex Plugin fixture", () => {
             cpSync("src/cli/pluginRuntimeContract.ts", join(fixture, "src", "cli", "pluginRuntimeContract.ts"));
             const mcpPath = join(fixture, "plugins", "kyoso", ".codex-plugin", "mcp.json");
             const mcp = JSON.parse(readFileSync(mcpPath, "utf8"));
-            const pinArgument = mcp.kyoso.args.find((argument) => argument.startsWith("--package=@kyo-so/cli@"));
-            const pinVersion = pinArgument.slice("--package=@kyo-so/cli@".length);
+            const pinArgument = mcp.kyoso.args.find((argument) => argument.startsWith("--package=kyoso-cli@npm:@kyo-so/cli@"));
+            const pinVersion = pinArgument.slice("--package=kyoso-cli@npm:@kyo-so/cli@".length);
             const packagePath = join(fixture, "package.json");
             const packageMetadata = JSON.parse(readFileSync(packagePath, "utf8"));
             packageMetadata.version = pinVersion;
@@ -1504,8 +1940,8 @@ describe("Codex Plugin fixture", () => {
             cpSync("src/cli/pluginRuntimeContract.ts", join(fixture, "src", "cli", "pluginRuntimeContract.ts"));
             const mcpPath = join(fixture, "plugins", "kyoso", ".codex-plugin", "mcp.json");
             const mcp = JSON.parse(readFileSync(mcpPath, "utf8"));
-            const pinArgument = mcp.kyoso.args.find((argument) => argument.startsWith("--package=@kyo-so/cli@"));
-            const pinVersion = pinArgument.slice("--package=@kyo-so/cli@".length);
+            const pinArgument = mcp.kyoso.args.find((argument) => argument.startsWith("--package=kyoso-cli@npm:@kyo-so/cli@"));
+            const pinVersion = pinArgument.slice("--package=kyoso-cli@npm:@kyo-so/cli@".length);
             const pinParts = pinVersion.split("-")[0].split(".");
             const aheadVersion = [pinParts[0], pinParts[1], String(Number(pinParts[2]) + 1)].join(".");
             const packagePath = join(fixture, "package.json");
@@ -1621,13 +2057,13 @@ describe("Codex Plugin fixture", () => {
             throw new Error("Plugin promotion must update exactly seven files");
           }
           if (
-            !mcp || JSON.parse(mcp.next).kyoso.args[1] !== "--package=" + packagePin
+            !mcp || JSON.parse(mcp.next).kyoso.args[1] !== "--package=kyoso-cli@npm:" + packagePin
           ) {
             throw new Error("Plugin promotion did not update the relocated MCP pin");
           }
           if (
-            !skill?.next.includes("npx -y --package=" + packagePin + " kyoso") ||
-            !skill.next.includes("bunx --package " + packagePin + " kyoso")
+            !skill?.next.includes("npx -y --package=kyoso-cli@npm:" + packagePin + " kyoso") ||
+            !skill.next.includes("bunx --package kyoso-cli@npm:" + packagePin + " kyoso")
           ) {
             throw new Error("Plugin promotion did not update both Skill fallback pins");
           }
@@ -1638,7 +2074,7 @@ describe("Codex Plugin fixture", () => {
           const nextClaudeMarketplace = JSON.parse(claudeMarketplace.next);
           if (
             nextClaudeManifest.version !== pluginVersion ||
-            nextClaudeManifest.mcpServers.kyoso.args[1] !== "--package=" + packagePin
+            nextClaudeManifest.mcpServers.kyoso.args[1] !== "--package=kyoso-cli@npm:" + packagePin
           ) {
             throw new Error("Plugin promotion did not update the Claude manifest version and pin");
           }

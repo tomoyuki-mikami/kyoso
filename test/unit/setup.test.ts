@@ -52,11 +52,11 @@ describe("setup", () => {
   test("builds npx and bunx MCP commands", () => {
     expect(commandForRunner("npx")).toEqual({
       command: "npx",
-      args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+      args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
     });
     expect(commandForRunner("bunx")).toEqual({
       command: "bunx",
-      args: ["--package", "@kyo-so/cli", "kyoso", "mcp"],
+      args: ["--package", "kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
     });
   });
 
@@ -290,7 +290,7 @@ describe("setup", () => {
 
     const dryRun = await runSetup({ ...options, write: false });
     expect(dryRun).toContain("Codex MCP: dry-run");
-    expect(dryRun).toContain("--package=@kyo-so/cli@0.13.1");
+    expect(dryRun).toContain("--package=kyoso-cli@npm:@kyo-so/cli@0.13.1");
     expect(dryRun).not.toContain("codex-preview-secret-value");
     expect(dryRun).not.toContain("[mcp_servers.other]");
     expect(await readFile(configPath, "utf8")).toBe(legacy);
@@ -303,10 +303,119 @@ describe("setup", () => {
     const updated = await readFile(configPath, "utf8");
     expect(migrated).toContain("Codex MCP: updated");
     expect(updated).toContain(
-      'args = ["-y","--package=@kyo-so/cli@0.13.1","kyoso","mcp"] # retain comment',
+      'args = ["-y","--package=kyoso-cli@npm:@kyo-so/cli@0.13.1","kyoso","mcp"] # retain comment',
     );
     expect(updated).toContain("enabled = false");
     expect(updated).toContain('[mcp_servers.other]\ncommand = "node"');
+  });
+
+  test("migrates an unaliased explicit Codex registration only with force", async () => {
+    const { cwd, home } = await setupTempDirs("kyoso-setup-unaliased-codex-");
+    const codexHome = join(cwd, "codex-state");
+    const configPath = join(codexHome, "config.toml");
+    const unaliased = [
+      "[mcp_servers.kyoso]",
+      'command = "npx"',
+      'args = ["-y", "--package=@kyo-so/cli@0.13.1", "kyoso", "mcp"]',
+      "enabled = true",
+      "",
+    ].join("\n");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(configPath, unaliased, "utf8");
+    const options = {
+      cwd,
+      client: "codex" as const,
+      global: false,
+      env: { HOME: home, CODEX_HOME: codexHome },
+    };
+
+    const dryRun = await runSetup({ ...options, write: false });
+    expect(dryRun).toContain("Codex MCP: dry-run");
+    expect(dryRun).toContain("--package=kyoso-cli@npm:@kyo-so/cli@0.13.1");
+    expect(await readFile(configPath, "utf8")).toBe(unaliased);
+
+    const preserved = await runSetup({ ...options, write: true });
+    expect(preserved).toContain("Codex MCP: skipped");
+    expect(await readFile(configPath, "utf8")).toBe(unaliased);
+
+    const migrated = await runSetup({ ...options, write: true, force: true });
+    expect(migrated).toContain("Codex MCP: updated");
+    expect(await readFile(configPath, "utf8")).toContain(
+      'args = ["-y","--package=kyoso-cli@npm:@kyo-so/cli@0.13.1","kyoso","mcp"]',
+    );
+  });
+
+  test("preserves an unaliased explicit Bun registration when the runner is omitted", async () => {
+    const { cwd, home } = await setupTempDirs("kyoso-setup-unaliased-bunx-");
+    const codexHome = join(cwd, "codex-state");
+    const configPath = join(codexHome, "config.toml");
+    const unaliased = [
+      "[mcp_servers.kyoso]",
+      'command = "bunx"',
+      'args = ["--package", "@kyo-so/cli@0.13.1", "kyoso", "mcp"]',
+      "enabled = true",
+      "",
+    ].join("\n");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(configPath, unaliased, "utf8");
+    const options = {
+      cwd,
+      client: "codex" as const,
+      global: false,
+      env: { HOME: home, CODEX_HOME: codexHome },
+    };
+
+    // A Bun entry is migrated only under an explicit `--runner`, so `--force`
+    // alone must not rewrite it and must not trigger the Bun probe. The repair
+    // path it offers must name a runner explicitly.
+    const forced = await runSetup({ ...options, write: true, force: true });
+    expect(forced).toContain("Codex MCP: skipped");
+    expect(forced).toContain("--runner");
+    expect(await readFile(configPath, "utf8")).toBe(unaliased);
+  });
+
+  // The unaliased explicit shape is recognized for both clients, but only the
+  // Codex path was covered. Claude Code reaches the same classifier through a
+  // different reader and writer, so a regression there would be invisible.
+  test("migrates an unaliased explicit Claude project registration only with force", async () => {
+    const { cwd, home } = await setupTempDirs("kyoso-setup-unaliased-claude-");
+    const configPath = join(cwd, ".mcp.json");
+    const unaliased = `${JSON.stringify(
+      {
+        mcpServers: {
+          kyoso: {
+            command: "npx",
+            args: ["-y", "--package=@kyo-so/cli@0.13.1", "kyoso", "mcp"],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+    await writeFile(configPath, unaliased, "utf8");
+    const options = {
+      cwd,
+      client: "claude-code" as const,
+      global: false,
+      env: { HOME: home },
+    };
+
+    const preserved = await runSetup({ ...options, write: true });
+    expect(preserved).toContain("Claude Code MCP: skipped");
+    expect(preserved).toContain(
+      "omits the kyoso-cli npm alias, so it can resolve a same-named workspace",
+    );
+    expect(await readFile(configPath, "utf8")).toBe(unaliased);
+
+    const migrated = await runSetup({ ...options, write: true, force: true });
+    expect(migrated).toContain("Claude Code MCP: updated");
+    const updated = JSON.parse(await readFile(configPath, "utf8"));
+    expect(updated.mcpServers.kyoso.args).toEqual([
+      "-y",
+      "--package=kyoso-cli@npm:@kyo-so/cli@0.13.1",
+      "kyoso",
+      "mcp",
+    ]);
   });
 
   test("migrates only exact Claude project legacy registrations", async () => {
@@ -339,7 +448,7 @@ describe("setup", () => {
     expect(dryRun).toContain("Claude Code MCP: dry-run");
     expect(dryRun).toContain('args = ["@kyo-so/cli@0.13.1", "mcp"]');
     expect(dryRun).toContain(
-      'args = ["--package", "@kyo-so/cli@0.13.1", "kyoso", "mcp"]',
+      'args = ["--package", "kyoso-cli@npm:@kyo-so/cli@0.13.1", "kyoso", "mcp"]',
     );
     expect(dryRun).not.toContain("claude-preview-secret-value");
 
@@ -398,7 +507,7 @@ describe("setup", () => {
     expect(migrated).toContain("Claude Code MCP: updated");
     expect(updated.mcpServers.kyoso).toMatchObject({
       command: "bunx",
-      args: ["--package", "@kyo-so/cli@0.13.1", "kyoso", "mcp"],
+      args: ["--package", "kyoso-cli@npm:@kyo-so/cli@0.13.1", "kyoso", "mcp"],
       enabled: false,
       timeout: 42,
       env: { OPENAI_API_KEY: "${OPENAI_API_KEY}" },
@@ -508,7 +617,7 @@ describe("setup", () => {
     );
     const configPath = join(cwd, ".mcp.json");
     const current =
-      '{"mcpServers":{"kyoso":{"command":"bunx","args":["--package","@kyo-so/cli","kyoso","mcp"]}}}\n';
+      '{"mcpServers":{"kyoso":{"command":"bunx","args":["--package","kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]}}}\n';
     await writeFile(configPath, current, "utf8");
     let probeCalls = 0;
 
@@ -601,7 +710,7 @@ describe("setup", () => {
     );
     expect(updated).toContain('      "keep": "format"');
     expect(updated).toContain(
-      '      "args": ["--package","@kyo-so/cli","kyoso","mcp"]',
+      '      "args": ["--package","kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]',
     );
   });
 
@@ -749,7 +858,7 @@ describe("setup", () => {
 
     expect(output).toContain("Claude Code MCP: updated");
     expect(await readFile(configPath, "utf8")).toContain(
-      '"args":["-y","--package=@kyo-so/cli","kyoso","mcp"]',
+      '"args":["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]',
     );
   });
 
@@ -817,7 +926,7 @@ describe("setup", () => {
     expect(output).toContain("Claude Code MCP: conflict");
     expect(output).toContain("may have been committed");
     expect(await readFile(configPath, "utf8")).toContain(
-      '"args":["-y","--package=@kyo-so/cli","kyoso","mcp"]',
+      '"args":["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]',
     );
   });
 
@@ -874,7 +983,7 @@ describe("setup", () => {
 
     expect(output).toContain("Codex MCP: updated");
     expect(await readFile(configPath, "utf8")).toContain(
-      'args = ["-y","--package=@kyo-so/cli","kyoso","mcp"] # keep [ticket-123]',
+      'args = ["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"] # keep [ticket-123]',
     );
     expect(await readFile(configPath, "utf8")).toContain("enabled = true");
   });
@@ -955,7 +1064,7 @@ describe("setup", () => {
     expect(output).toContain("Codex MCP: updated");
     expect(updated).toContain('command = "npx"');
     expect(updated).toContain(
-      'args = ["-y","--package=@kyo-so/cli@0.13.1","kyoso","mcp"]',
+      'args = ["-y","--package=kyoso-cli@npm:@kyo-so/cli@0.13.1","kyoso","mcp"]',
     );
     expect(updated).toContain("enabled = true");
   });
@@ -995,7 +1104,7 @@ describe("setup", () => {
     expect(recovered).toContain("Claude Code MCP: updated");
     expect(await readFile(configPath, "utf8")).toContain('"command":"npx"');
     expect(await readFile(configPath, "utf8")).toContain(
-      '"args":["-y","--package=@kyo-so/cli","kyoso","mcp"]',
+      '"args":["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]',
     );
   });
 
@@ -1111,7 +1220,7 @@ describe("setup", () => {
     });
     expect(verified).toContain("Codex MCP: created");
     expect(await readFile(configPath, "utf8")).toContain(
-      'args = ["--package","@kyo-so/cli","kyoso","mcp"]',
+      'args = ["--package","kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]',
     );
   });
 
@@ -1314,6 +1423,11 @@ describe("setup", () => {
     expect(output).toContain(
       "Automatic migration supports only a project .mcp.json",
     );
+    // Setup cannot migrate this scope, so the reason is the whole of what the
+    // user gets to work from.
+    expect(output).toContain(
+      "relies on executable inference with a multi-bin package",
+    );
     expect(output).toContain(configPath);
   });
 
@@ -1326,7 +1440,7 @@ describe("setup", () => {
     const projectLegacy =
       '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","@kyo-so/cli","mcp"]}}}\n';
     const userCurrent =
-      '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","--package=@kyo-so/cli","kyoso","mcp"]}}}\n';
+      '{"mcpServers":{"kyoso":{"command":"npx","args":["-y","--package=kyoso-cli@npm:@kyo-so/cli","kyoso","mcp"]}}}\n';
     await writeFile(projectPath, projectLegacy, "utf8");
     await writeFile(userPath, userCurrent, "utf8");
 
@@ -1427,7 +1541,7 @@ describe("setup", () => {
     ]);
     expect(parsed.mcpServers.kyoso).toMatchObject({
       command: "bunx",
-      args: ["--package", "@kyo-so/cli", "kyoso", "mcp"],
+      args: ["--package", "kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
       env: { OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}" },
     });
     expect(
@@ -2036,7 +2150,7 @@ describe("setup", () => {
     await mkdir(join(home, ".codex"), { recursive: true });
     await writeFile(
       join(home, ".codex", "config.toml"),
-      '[mcp_servers."kyoso"]\ncommand = "npx"\nargs = ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"]\n',
+      '[mcp_servers."kyoso"]\ncommand = "npx"\nargs = ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"]\n',
       "utf8",
     );
     await writeFile(
@@ -2047,7 +2161,12 @@ describe("setup", () => {
             mcpServers: {
               kyoso: {
                 command: "npx",
-                args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+                args: [
+                  "-y",
+                  "--package=kyoso-cli@npm:@kyo-so/cli",
+                  "kyoso",
+                  "mcp",
+                ],
               },
             },
           },
@@ -2110,7 +2229,7 @@ describe("setup", () => {
   test("omits OpenRouter from the default Claude MCP env placeholders", () => {
     expect(buildClaudeMcpEntry(commandForRunner("npx"))).toEqual({
       command: "npx",
-      args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+      args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
       env: {
         OPENAI_API_KEY: "${OPENAI_API_KEY}",
         ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}",
@@ -2122,7 +2241,7 @@ describe("setup", () => {
   test("adds OpenRouter to Claude MCP env placeholders only when requested", () => {
     expect(buildClaudeMcpEntry(commandForRunner("npx"), true)).toEqual({
       command: "npx",
-      args: ["-y", "--package=@kyo-so/cli", "kyoso", "mcp"],
+      args: ["-y", "--package=kyoso-cli@npm:@kyo-so/cli", "kyoso", "mcp"],
       env: {
         OPENAI_API_KEY: "${OPENAI_API_KEY}",
         ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}",

@@ -704,13 +704,19 @@ describe("review budget report", () => {
     ];
     const installedCommand =
       "kyoso-budget-report --trace-dir /absolute/path/to/traces --json";
-    const mutableCommand =
-      "npx --yes --package @kyo-so/cli kyoso-budget-report";
+    // Both spellings resolve the package at run time. The aliased form became
+    // the documented shape for every other command, so it needs the same guard.
+    const mutableCommands = [
+      "npx --yes --package @kyo-so/cli kyoso-budget-report",
+      "npx --yes --package kyoso-cli@npm:@kyo-so/cli kyoso-budget-report",
+    ];
 
     for (const path of documentationPaths) {
       const contents = await readFile(resolve(path), "utf8");
       expect(contents).toContain(installedCommand);
-      expect(contents).not.toContain(mutableCommand);
+      for (const mutableCommand of mutableCommands) {
+        expect(contents).not.toContain(mutableCommand);
+      }
     }
   });
 

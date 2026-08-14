@@ -670,7 +670,7 @@ async function ensureExistingCodexMcp(
     status: "updated",
     path: existing.path,
     detail:
-      "migrated exact legacy [mcp_servers.kyoso] invocation to explicit package/executable args",
+      "migrated exact legacy [mcp_servers.kyoso] invocation to the current aliased package/executable args",
   };
 }
 
@@ -809,7 +809,7 @@ async function ensureExistingClaudeProjectMcp(
     status: "updated",
     path: existing.path,
     detail:
-      "migrated exact legacy mcpServers.kyoso invocation to explicit package/executable args",
+      "migrated exact legacy mcpServers.kyoso invocation to the current aliased package/executable args",
   };
 }
 
@@ -882,7 +882,7 @@ function claudeGlobalMcpPreservedDetail(detection: McpDetection): string {
     registration.scope === "claude-global"
       ? "user"
       : "project-scoped user-config";
-  return `existing ${scope} mcpServers.kyoso uses legacy package-runner arguments and was kept. Automatic migration supports only a project .mcp.json; update ${registration.path} manually.`;
+  return `existing ${scope} mcpServers.kyoso uses legacy package-runner arguments and was kept: ${registration.invocation.reason} Automatic migration supports only a project .mcp.json; update ${registration.path} manually.`;
 }
 
 function claudeProjectMcpScopeConflictResult(
@@ -1277,10 +1277,10 @@ function codexPreservedDetail(registration: ManualMcpRegistration): string {
     return disabledCodexMcpDetail(registration.path);
   }
   if (registration.invocation.kind === "current") {
-    return "existing [mcp_servers.kyoso] uses the current explicit package/executable invocation and was kept.";
+    return "existing [mcp_servers.kyoso] uses the current aliased package/executable invocation and was kept.";
   }
   if (registration.invocation.kind === "legacy") {
-    return "existing [mcp_servers.kyoso] uses a legacy invocation and was kept unchanged.";
+    return `existing [mcp_servers.kyoso] uses a legacy invocation and was kept unchanged. ${registration.invocation.reason}`;
   }
   return `existing [mcp_servers.kyoso] is ${formatInvocationKind(registration.invocation.kind)} and was kept unchanged. ${registration.invocation.reason}`;
 }
@@ -1290,10 +1290,10 @@ function claudePreservedDetail(registration: ManualMcpRegistration): string {
     return disabledClaudeMcpDetail(registration.path);
   }
   if (registration.invocation.kind === "current") {
-    return "existing mcpServers.kyoso uses the current explicit package/executable invocation and was kept.";
+    return "existing mcpServers.kyoso uses the current aliased package/executable invocation and was kept.";
   }
   if (registration.invocation.kind === "legacy") {
-    return "existing mcpServers.kyoso uses a legacy invocation and was kept unchanged.";
+    return `existing mcpServers.kyoso uses a legacy invocation and was kept unchanged. ${registration.invocation.reason}`;
   }
   return `existing mcpServers.kyoso is ${formatInvocationKind(registration.invocation.kind)} and was kept unchanged. ${registration.invocation.reason}`;
 }
@@ -1311,11 +1311,15 @@ function legacyMigrationDetail(
   replacement: McpCommand,
 ): string {
   const legacyArgs = invocation.legacyArgs;
+  // The diff below shows what would change but never why it matters, and the
+  // two legacy shapes fail differently. Naming the reason is what lets a reader
+  // decide whether to migrate.
+  const headline = `legacy package-runner invocation detected; only --write --force may migrate it. ${invocation.reason}`;
   if (!invocation.runner || !legacyArgs) {
-    return "legacy package-runner invocation detected; only --write --force may migrate it. The migration preview is unavailable because its exact command arguments could not be reconstructed.";
+    return `${headline} The migration preview is unavailable because its exact command arguments could not be reconstructed.`;
   }
   return [
-    "legacy package-runner invocation detected; only --write --force may migrate it.",
+    headline,
     `--- ${formatMigrationPreviewValue(path)}`,
     `+++ ${formatMigrationPreviewValue(path)}`,
     "@@ Kyoso MCP invocation",

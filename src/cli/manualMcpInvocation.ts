@@ -2,6 +2,8 @@ import {
   buildKyosoPackageCommand,
   isCompleteSemVer,
   KYOSO_EXECUTABLE_NAME,
+  KYOSO_PACKAGE_ALIAS,
+  KYOSO_PACKAGE_ALIAS_PREFIX,
   KYOSO_PACKAGE_NAME,
   type KyosoPackageCommand,
   type KyosoPackageRunner,
@@ -114,19 +116,59 @@ function isGeneratedMcpEnvironmentVariables(value: unknown): boolean {
   );
 }
 
+// An unaliased explicit form still selects the executable correctly, so it is
+// migrated for a different reason than a positional form: the specifier itself
+// can resolve a same-named workspace instead of the published package.
+const UNALIASED_EXPLICIT_REASON = `Kyoso package runner omits the ${KYOSO_PACKAGE_ALIAS} npm alias, so it can resolve a same-named workspace instead of the published package.`;
+const EXECUTABLE_INFERENCE_REASON =
+  "Kyoso package runner relies on executable inference with a multi-bin package.";
+
+// Match the package name exactly or up to its version separator, so a different
+// package that merely shares the prefix — `@kyo-so/cli-extra` — is not diagnosed
+// as a malformed Kyoso pin.
+function isKyosoPackageSpec(packageSpec: string): boolean {
+  return (
+    packageSpec === KYOSO_PACKAGE_NAME ||
+    packageSpec.startsWith(`${KYOSO_PACKAGE_NAME}@`)
+  );
+}
+
+// An explicit argv may or may not carry the alias. Strip it so a tag, range, or
+// malformed pin reaches the same diagnosis either way instead of falling through
+// to the generic "arguments do not match" reason.
+function bareKyosoPackageSpec(packageSpec: string): string | undefined {
+  const bare = packageSpec.startsWith(KYOSO_PACKAGE_ALIAS_PREFIX)
+    ? packageSpec.slice(KYOSO_PACKAGE_ALIAS_PREFIX.length)
+    : packageSpec;
+  return isKyosoPackageSpec(bare) ? bare : undefined;
+}
+
 function inspectNpx(args: string[]): ManualMcpInvocationInspection {
-  const current = parseNpxCurrent(args);
-  if (current) {
+  const explicit = parseNpxExplicit(args);
+  if (explicit !== undefined && isAliasedPackageSpec(explicit)) {
     return {
       kind: "current",
       runner: "npx",
-      packageSpec: current.packageSpec,
-      reason: "npx explicitly selects the Kyoso executable from its package.",
+      packageSpec: explicit,
+      reason:
+        "npx explicitly selects the Kyoso executable from its aliased package.",
     };
+  }
+  const explicitBare =
+    explicit === undefined ? undefined : bareKyosoPackageSpec(explicit);
+  if (explicitBare !== undefined) {
+    return legacyInspection(
+      "npx",
+      explicitBare,
+      args,
+      UNALIASED_EXPLICIT_REASON,
+    );
   }
 
   const legacy = parseNpxLegacy(args);
-  if (legacy) return legacyInspection("npx", legacy, args);
+  if (legacy) {
+    return legacyInspection("npx", legacy, args, EXECUTABLE_INFERENCE_REASON);
+  }
 
   return {
     kind: "custom",
@@ -136,18 +178,31 @@ function inspectNpx(args: string[]): ManualMcpInvocationInspection {
 }
 
 function inspectBunx(args: string[]): ManualMcpInvocationInspection {
-  const current = parseBunxCurrent(args);
-  if (current) {
+  const explicit = parseBunxExplicit(args);
+  if (explicit !== undefined && isAliasedPackageSpec(explicit)) {
     return {
       kind: "current",
       runner: "bunx",
-      packageSpec: current.packageSpec,
-      reason: "bunx explicitly selects the Kyoso executable from its package.",
+      packageSpec: explicit,
+      reason:
+        "bunx explicitly selects the Kyoso executable from its aliased package.",
     };
+  }
+  const explicitBare =
+    explicit === undefined ? undefined : bareKyosoPackageSpec(explicit);
+  if (explicitBare !== undefined) {
+    return legacyInspection(
+      "bunx",
+      explicitBare,
+      args,
+      UNALIASED_EXPLICIT_REASON,
+    );
   }
 
   const legacy = parseBunxLegacy(args);
-  if (legacy) return legacyInspection("bunx", legacy, args);
+  if (legacy) {
+    return legacyInspection("bunx", legacy, args, EXECUTABLE_INFERENCE_REASON);
+  }
 
   return {
     kind: "custom",
@@ -160,8 +215,14 @@ function legacyInspection(
   runner: KyosoPackageRunner,
   packageSpec: string,
   legacyArgs: readonly string[],
+  reason: string,
 ): ManualMcpInvocationInspection {
   const version = versionFromKnownPackageSpec(packageSpec);
+  // A spec we cannot pin has no safe replacement to migrate to, so it is custom
+  // rather than legacy. The caller's `reason` is deliberately dropped here: it
+  // describes the argv shape, and reporting "the alias is missing" about
+  // `kyoso-cli@npm:@kyo-so/cli@latest` — which carries the alias — would be
+  // false. What blocks this entry is the spec, so the spec is what we name.
   if (version === undefined && packageSpec !== KYOSO_PACKAGE_NAME) {
     return {
       kind: "custom",
@@ -181,12 +242,11 @@ function legacyInspection(
       ...(version === undefined ? {} : { version }),
       cliArgs: ["mcp"],
     }),
-    reason:
-      "Kyoso package runner relies on executable inference with a multi-bin package.",
+    reason,
   };
 }
 
-function parseNpxCurrent(args: string[]): { packageSpec: string } | undefined {
+function parseNpxExplicit(args: string[]): string | undefined {
   if (
     args.length !== 4 ||
     args[0] !== "-y" ||
@@ -195,15 +255,12 @@ function parseNpxCurrent(args: string[]): { packageSpec: string } | undefined {
   ) {
     return undefined;
   }
-  const packageSpec = args[1]?.startsWith("--package=")
+  return args[1]?.startsWith("--package=")
     ? args[1].slice("--package=".length)
-    : undefined;
-  return packageSpec && isKnownPackageSpec(packageSpec)
-    ? { packageSpec }
     : undefined;
 }
 
-function parseBunxCurrent(args: string[]): { packageSpec: string } | undefined {
+function parseBunxExplicit(args: string[]): string | undefined {
   if (
     args.length !== 4 ||
     args[0] !== "--package" ||
@@ -212,10 +269,7 @@ function parseBunxCurrent(args: string[]): { packageSpec: string } | undefined {
   ) {
     return undefined;
   }
-  const packageSpec = args[1];
-  return packageSpec && isKnownPackageSpec(packageSpec)
-    ? { packageSpec }
-    : undefined;
+  return args[1];
 }
 
 function parseNpxLegacy(args: string[]): string | undefined {
@@ -224,7 +278,7 @@ function parseNpxLegacy(args: string[]): string | undefined {
     return undefined;
   }
   const packageSpec = args[packageIndex];
-  return packageSpec && packageSpec.startsWith(KYOSO_PACKAGE_NAME)
+  return packageSpec && isKyosoPackageSpec(packageSpec)
     ? packageSpec
     : undefined;
 }
@@ -232,12 +286,19 @@ function parseNpxLegacy(args: string[]): string | undefined {
 function parseBunxLegacy(args: string[]): string | undefined {
   if (args.length !== 2 || args[1] !== "mcp") return undefined;
   const packageSpec = args[0];
-  return packageSpec && packageSpec.startsWith(KYOSO_PACKAGE_NAME)
+  return packageSpec && isKyosoPackageSpec(packageSpec)
     ? packageSpec
     : undefined;
 }
 
-function isKnownPackageSpec(packageSpec: string): boolean {
+function isAliasedPackageSpec(packageSpec: string): boolean {
+  if (!packageSpec.startsWith(KYOSO_PACKAGE_ALIAS_PREFIX)) return false;
+  return isPublishedPackageSpec(
+    packageSpec.slice(KYOSO_PACKAGE_ALIAS_PREFIX.length),
+  );
+}
+
+function isPublishedPackageSpec(packageSpec: string): boolean {
   return (
     packageSpec === KYOSO_PACKAGE_NAME ||
     versionFromKnownPackageSpec(packageSpec) !== undefined

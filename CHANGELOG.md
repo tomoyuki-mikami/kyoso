@@ -34,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extract the Plugin CLI pin from the aliased argv in
   `.github/workflows/release.yml`, matching the alias adopted above.
 
+### Removed
+
+- Remove the tracked `.codex/config.toml`. Its project-local
+  `mcp_servers.kyoso` entry silently took precedence over the installed Plugin
+  and over a maintainer's own MCP registration, so every dogfooding review ran
+  an unintended runtime. That entry also resolved the CLI through `@latest`
+  rather than an exact pin and passed
+  `--safe-chain-skip-minimum-package-age`, waiving the minimum-package-age
+  check. Forwarding the generated credential set is normal for a Kyoso MCP
+  entry; what this project's own documentation tells users to avoid is handing
+  that set to an unpinned, age-check-waived resolution. `.gitignore` now covers
+  `.codex/` and a project-root `.mcp.json` — the Claude Code equivalent, which
+  shadows the Plugin the same way — so a local copy of either stays out of
+  `git add`.
+
 ## [0.16.7] - 2026-08-11
 
 ### Changed

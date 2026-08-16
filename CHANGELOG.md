@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias. `0.7.15` carries no release tag, but the marketplace entry points
   resolve this repository's default branch, so anyone who installed or updated
   the Plugin after that commit already has the unaliased pin; run
-  `/plugin update kyoso` (or the Codex equivalent) to pick up `0.7.16`.
+  `/plugin update kyoso` (or the Codex equivalent) to pick up `0.7.16`. The bump
+  also gives a version number to the Codex icon assets, which were added to the
+  Plugin after `0.7.15` was promoted and so had none of their own.
 - Extract the Plugin CLI pin from the aliased argv in
   `.github/workflows/release.yml`, matching the alias adopted above.
 
